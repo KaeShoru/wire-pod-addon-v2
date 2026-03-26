@@ -1,4 +1,4 @@
-FROM ghcr.io/kercre123/wire-pod:main
+FROM ghcr.io/kaeshoru/wire-pod-addon:latest
 
 # Create directories for HA Add-on
 RUN mkdir -p /data/wire-pod /data/vector/certs /data/vector/models /var/www/html /etc/nginx
