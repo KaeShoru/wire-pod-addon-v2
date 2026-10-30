@@ -1,0 +1,25 @@
+name: Build and publish
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Wire-Pod
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/build-app.yaml
+    with:
+      publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    secrets: inherit
