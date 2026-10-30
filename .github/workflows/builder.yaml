@@ -23,3 +23,16 @@ jobs:
     with:
       publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     secrets: inherit
+
+  runtime-smoke:
+    name: Runtime smoke (amd64)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Build and start Wire-Pod
+        run: ./scripts/smoke.sh
