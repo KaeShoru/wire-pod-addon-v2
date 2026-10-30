@@ -14,8 +14,8 @@ jobs:
     outputs:
       architectures: ${{ steps.info.outputs.architectures }}
       build_matrix: ${{ steps.matrix.outputs.matrix }}
-      description: ${{ steps.info.outputs.description }}
-      version: ${{ steps.info.outputs.version }}
+      description: ${{ steps.normalize.outputs.description }}
+      version: ${{ steps.normalize.outputs.version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
@@ -25,6 +25,14 @@ jobs:
         uses: home-assistant/actions/helpers/info@master
         with:
           path: ./wire-pod
+
+      - name: Normalize app information
+        id: normalize
+        run: |
+          description=${{ steps.info.outputs.description }}
+          echo "description=${description}" >> "${GITHUB_OUTPUT}"
+          version=${{ steps.info.outputs.version }}
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
       - name: Prepare build matrix
         id: matrix
