@@ -1,0 +1,21 @@
+name: Lint
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Home Assistant app lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Run Home Assistant app linter
+        uses: frenck/action-addon-linter@v2.21
+        with:
+          path: ./wire-pod
