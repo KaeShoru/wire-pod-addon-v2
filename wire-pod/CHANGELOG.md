@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+
+- Fixed the Web UI URL template so Home Assistant Supervisor accepts and lists
+  the app in the store.
+- Promoted the app from experimental to the default stable stage.
+
 ## 2.0.0
 
 - Rebuilt the repository using the supported Home Assistant app layout.
