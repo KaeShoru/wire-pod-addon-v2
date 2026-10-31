@@ -5,6 +5,13 @@
 # the Home Assistant host.
 FROM ghcr.io/kercre123/wire-pod@sha256:b8ac0d5593704592eacedd293a864e0504f4974b44e64a4c56a6fae19857fb94
 
+# The upstream start script launches the server as a child of PID 1. Replace
+# those foreground launches with exec so Supervisor stop/restart signals reach
+# Wire-Pod directly and the container lifecycle matches the server lifecycle.
+RUN sed -Ei 's|^([[:space:]]*)\./chipper[[:space:]]*$|\1exec ./chipper|' \
+        /opt/wire-pod/chipper/start.sh \
+    && grep -q 'exec ./chipper' /opt/wire-pod/chipper/start.sh
+
 ARG BUILD_VERSION
 ARG BUILD_ARCH
 

@@ -33,6 +33,12 @@ docker run \
 for attempt in $(seq 1 60); do
     if curl --fail --silent --show-error http://127.0.0.1:8080/ok >/dev/null; then
         echo "Wire-Pod became ready after ${attempt}s"
+        pid_one_executable="$(docker exec "${container_name}" readlink /proc/1/exe)"
+        if [[ "${pid_one_executable}" != */chipper ]]; then
+            echo "Wire-Pod is not PID 1: ${pid_one_executable}" >&2
+            exit 1
+        fi
+        echo "Wire-Pod owns PID 1"
         docker stats --no-stream \
             --format 'Memory={{.MemUsage}} CPU={{.CPUPerc}}' \
             "${container_name}"
