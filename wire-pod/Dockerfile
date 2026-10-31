@@ -6,7 +6,7 @@
 FROM ghcr.io/kercre123/wire-pod@sha256:b8ac0d5593704592eacedd293a864e0504f4974b44e64a4c56a6fae19857fb94
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nginx-light \
+    && apt-get install -y --no-install-recommends nginx-core \
     && rm -rf /var/lib/apt/lists/*
 
 # The upstream start script launches the server as a child of PID 1. Replace
