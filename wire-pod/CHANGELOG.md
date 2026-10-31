@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.2
+
+- Made the Wire-Pod server the container's managed foreground process so Home
+  Assistant can track and stop it reliably.
+- Enabled Docker's lightweight init process for signal forwarding and zombie
+  process cleanup.
+
 ## 2.0.1
 
 - Fixed the Web UI URL template so Home Assistant Supervisor accepts and lists
