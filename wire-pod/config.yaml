@@ -7,7 +7,6 @@ arch:
   - aarch64
   - amd64
 startup: services
-init: true
 host_network: true
 webui: http://[HOST]:[PORT:8080]
 backup: cold
