@@ -8,9 +8,7 @@ arch:
   - amd64
 startup: services
 host_network: true
-webui: http://[HOST]:[PORT:8080]
 ingress: true
-ingress_port: 8099
 panel_icon: mdi:robot-happy
 panel_title: Wire-Pod
 backup: cold
