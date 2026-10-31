@@ -1,4 +1,4 @@
-ARG BUILD_FROM
+ARG BUILD_ARCH
 
 # Build the bridge from source for the architecture of this Home Assistant (no cgo, static binary).
 FROM golang:1.26-alpine AS build
@@ -10,7 +10,7 @@ ARG BUILD_VERSION
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${BUILD_VERSION}" \
         -o /out/vector-bridge ./cmd/vector-bridge
 
-FROM ${BUILD_FROM}
+FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.21
 
 # The Home Assistant base image has bash, jq and curl (options, Supervisor API);
 # tzdata: local time in the log; ffmpeg: decodes audio (TTS, files) to 16 kHz PCM for the speaker.
