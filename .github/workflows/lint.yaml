@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Home Assistant app lint
+  wire-pod:
+    name: Wire-Pod app lint
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -19,3 +19,29 @@ jobs:
         uses: frenck/action-addon-linter@v2.21
         with:
           path: ./wire-pod
+
+  vector:
+    name: Vector app lint and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Run Home Assistant app linter
+        uses: frenck/action-addon-linter@v2.21
+        with:
+          path: ./vector
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: vector/bridge/go.mod
+          cache-dependency-path: vector/bridge/go.sum
+
+      - name: Vet bridge
+        working-directory: vector/bridge
+        run: go vet ./...
+
+      - name: Test bridge
+        working-directory: vector/bridge
+        run: go test ./...

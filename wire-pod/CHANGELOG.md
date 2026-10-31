@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.0
+
+- Added Home Assistant Ingress with a Wire-Pod entry for the sidebar.
+- Added a small authenticated reverse proxy that adapts Wire-Pod's absolute
+  web paths to the Home Assistant Ingress path.
+- Added the companion Vector bridge app to this repository for battery and
+  state sensors, events, camera, speaker and robot commands.
+
 ## 2.0.2
 
 - Made the Wire-Pod server the container's managed foreground process so Home
