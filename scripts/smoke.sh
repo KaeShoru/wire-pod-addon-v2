@@ -33,12 +33,17 @@ docker run \
 for attempt in $(seq 1 60); do
     if curl --fail --silent --show-error http://127.0.0.1:8080/ok >/dev/null; then
         echo "Wire-Pod became ready after ${attempt}s"
-        pid_one_executable="$(docker exec "${container_name}" readlink /proc/1/exe)"
-        if [[ "${pid_one_executable}" != */chipper ]]; then
-            echo "Wire-Pod is not PID 1: ${pid_one_executable}" >&2
+        if ! docker exec "${container_name}" sh -c \
+            'grep -lqx chipper /proc/[0-9]*/comm >/dev/null'; then
+            echo "Wire-Pod process is not running" >&2
             exit 1
         fi
-        echo "Wire-Pod owns PID 1"
+        if ! docker exec "${container_name}" sh -c \
+            'grep -lqx nginx /proc/[0-9]*/comm >/dev/null'; then
+            echo "Ingress proxy is not running" >&2
+            exit 1
+        fi
+        echo "Wire-Pod and its Ingress proxy are running"
         docker stats --no-stream \
             --format 'Memory={{.MemUsage}} CPU={{.CPUPerc}}' \
             "${container_name}"

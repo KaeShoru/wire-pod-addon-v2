@@ -24,8 +24,9 @@ move it before starting Wire-Pod.
 1. Start the app.
 2. Wait until the log says that Wire-Pod is not set up and the web server is
    available on port 8080.
-3. Select **Open Web UI**, or browse to
-   `http://<home-assistant-host>:8080`.
+3. Select **Open Web UI** or **Show in sidebar** to use the authenticated Home
+   Assistant Ingress panel. Direct access remains available at
+   `http://<home-assistant-host>:8080` for Vector setup tools that need it.
 4. Complete Wire-Pod's setup wizard.
 5. Make sure Vector and Home Assistant are on the same LAN and that client/AP
    isolation is disabled.
@@ -41,9 +42,21 @@ The app is healthy when `http://<home-assistant-host>:8080/ok` responds.
 - Keep at least several hundred megabytes of free storage for the image, model
   and persistent state.
 
-The app intentionally does not bundle MQTT, nginx or a second Home Assistant
-bridge. Those features can be added separately after the core Wire-Pod service
-is confirmed stable.
+The Ingress proxy is intentionally small. The optional Vector bridge runs as a
+separate app, so camera/control features can be stopped without interrupting
+Vector's voice server.
+
+## Vector sensors and commands
+
+Install **Vector (Anki / Digital Dream Labs)** from this repository and leave
+its `wirepod_url` option set to `auto`. Then install the
+[Vector integration](https://github.com/witold-gren/home-assistant-vector-integration)
+through HACS. Home Assistant will discover the bridge automatically.
+
+This provides battery percentage and voltage, charger and sleep state, robot
+events, camera and speaker entities, and behavior buttons including go to
+charger and go to sleep. It also exposes movement, animations, photos, faces,
+cube actions and optional Voice → Home Assistant routing. MQTT is not needed.
 
 ## Persistence and backups
 
@@ -72,7 +85,7 @@ Check the app log first. The most common cause is another process using port 80,
 
 Release installation should pull a pre-built image. If Home Assistant attempts
 to compile Wire-Pod, the release image is missing or inaccessible. Verify that
-`ghcr.io/kaeshoru/wire-pod-addon-v2:2.0.0` is public.
+the `ghcr.io/kaeshoru/wire-pod-addon-v2` package is public.
 
 ### Updating the upstream Wire-Pod version
 

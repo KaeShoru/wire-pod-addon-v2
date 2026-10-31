@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-wire-pod:
     name: Wire-Pod
     permissions:
       contents: read
@@ -21,12 +21,27 @@ jobs:
       packages: write
     uses: ./.github/workflows/build-app.yaml
     with:
+      app_path: ./wire-pod
+      app_name: Wire-Pod for Vector
+      publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    secrets: inherit
+
+  build-vector:
+    name: Vector bridge
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/build-app.yaml
+    with:
+      app_path: ./vector
+      app_name: Vector for Home Assistant
       publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     secrets: inherit
 
   runtime-smoke:
     name: Runtime smoke (amd64)
-    needs: build
+    needs: build-wire-pod
     runs-on: ubuntu-latest
     permissions:
       contents: read

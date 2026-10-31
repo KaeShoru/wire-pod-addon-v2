@@ -3,6 +3,12 @@ name: Build app
 on:
   workflow_call:
     inputs:
+      app_path:
+        required: true
+        type: string
+      app_name:
+        required: true
+        type: string
       publish:
         required: true
         type: boolean
@@ -24,7 +30,7 @@ jobs:
         id: info
         uses: home-assistant/actions/helpers/info@master
         with:
-          path: ./wire-pod
+          path: ${{ inputs.app_path }}
 
       - name: Normalize app information
         id: normalize
@@ -64,14 +70,13 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
-          context: ./wire-pod
+          context: ${{ inputs.app_path }}
           image: ${{ matrix.image }}
           image-tags: |
             ${{ needs.prepare.outputs.version }}
-            latest
           labels: |
             io.hass.type=app
-            io.hass.name=Wire-Pod for Vector
+            io.hass.name=${{ inputs.app_name }}
             io.hass.description=${{ needs.prepare.outputs.description }}
             io.hass.url=https://github.com/KaeShoru/wire-pod-addon-v2
           push: ${{ inputs.publish }}
@@ -96,5 +101,4 @@ jobs:
           image-name: wire-pod-addon-v2
           image-tags: |
             ${{ needs.prepare.outputs.version }}
-            latest
           registry-prefix: ghcr.io/kaeshoru

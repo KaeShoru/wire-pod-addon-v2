@@ -5,12 +5,20 @@
 # the Home Assistant host.
 FROM ghcr.io/kercre123/wire-pod@sha256:b8ac0d5593704592eacedd293a864e0504f4974b44e64a4c56a6fae19857fb94
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nginx-light \
+    && rm -rf /var/lib/apt/lists/*
+
 # The upstream start script launches the server as a child of PID 1. Replace
 # those foreground launches with exec so Supervisor stop/restart signals reach
 # Wire-Pod directly and the container lifecycle matches the server lifecycle.
 RUN sed -Ei 's|^([[:space:]]*)\./chipper[[:space:]]*$|\1exec ./chipper|' \
         /opt/wire-pod/chipper/start.sh \
     && grep -q 'exec ./chipper' /opt/wire-pod/chipper/start.sh
+
+COPY nginx-ingress.conf /etc/nginx/nginx.conf
+COPY run.sh /usr/local/bin/run-wire-pod
+RUN chmod 0755 /usr/local/bin/run-wire-pod
 
 ARG BUILD_VERSION
 ARG BUILD_ARCH
@@ -26,3 +34,5 @@ LABEL \
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
     CMD curl -fsS http://127.0.0.1:8080/ok || exit 1
+
+CMD ["/usr/local/bin/run-wire-pod"]
