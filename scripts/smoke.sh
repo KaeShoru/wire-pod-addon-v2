@@ -43,6 +43,14 @@ for attempt in $(seq 1 60); do
             echo "Ingress proxy is not running" >&2
             exit 1
         fi
+        if ! curl --fail --silent --show-error \
+            --header 'X-Ingress-Path: /api/hassio_ingress/test-session' \
+            http://127.0.0.1:8099/js/main.js \
+            | grep --fixed-strings --quiet \
+                '"/api/hassio_ingress/test-session/api/get_config"'; then
+            echo "Ingress proxy did not rewrite Wire-Pod API paths" >&2
+            exit 1
+        fi
         echo "Wire-Pod and its Ingress proxy are running"
         docker stats --no-stream \
             --format 'Memory={{.MemUsage}} CPU={{.CPUPerc}}' \
