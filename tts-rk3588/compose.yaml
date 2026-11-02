@@ -1,0 +1,13 @@
+services:
+  vector-tts:
+    image: ghcr.io/kaeshoru/wire-pod-addon-v2:tts-rk3588-0.1.0
+    container_name: vector-tts
+    network_mode: host
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      PIPER_DEFAULT_LANG: ru_RU
+      PIPER_LANGUAGES: ru_RU
+      PIPER_MEL_LEN: "256"
+    restart: unless-stopped
+    mem_limit: 1g
