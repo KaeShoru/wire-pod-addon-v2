@@ -1,0 +1,105 @@
+diff --git a/chipper/pkg/wirepod/ttr/kgsim.go b/chipper/pkg/wirepod/ttr/kgsim.go
+index 585afa2..6bfb2af 100644
+--- a/chipper/pkg/wirepod/ttr/kgsim.go
++++ b/chipper/pkg/wirepod/ttr/kgsim.go
+@@ -258,8 +258,8 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
+ 	case "openai":
+ 		c = openai.NewClient(vars.APIConfig.Knowledge.Key)
+ 	}
+-	speakReady := make(chan string)
+-	successIntent := make(chan bool)
++	speakReady := make(chan string, 1)
++	successIntent := make(chan bool, 1)
+ 
+ 	aireq := CreateAIReq(transcribedText, esn, false, isKG)
+ 
+@@ -299,10 +299,25 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
+ 		for {
+ 			response, err := stream.Recv()
+ 			if errors.Is(err, io.EOF) {
+-				// prevents a crash
+-				if len(fullRespSlice) == 0 {
++				remaining := strings.TrimSpace(fullRespText)
++				if remaining != "" {
++					logger.Println("LLM debug: adding content after the last punctuation mark")
++					fullRespSlice = append(fullRespSlice, remaining)
++					select {
++					case successIntent <- true:
++					default:
++					}
++					select {
++					case speakReady <- remaining:
++					default:
++					}
++				}
++				if strings.TrimSpace(fullfullRespText) == "" {
+ 					logger.Println("LLM returned no response")
+-					successIntent <- false
++					select {
++					case successIntent <- false:
++					default:
++					}
+ 					if isKG {
+ 						kgStopLooping = true
+ 						for range kgReadyToAnswer {
+@@ -315,19 +330,7 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
+ 					break
+ 				}
+ 				isDone = true
+-				// if fullRespSlice != fullRespText, add that missing bit to fullRespSlice
+-				newStr := fullRespSlice[0]
+-				for i, str := range fullRespSlice {
+-					if i == 0 {
+-						continue
+-					}
+-					newStr = newStr + " " + str
+-				}
+-				if strings.TrimSpace(newStr) != strings.TrimSpace(fullfullRespText) {
+-					logger.Println("LLM debug: there is content after the last punctuation mark")
+-					extraBit := strings.TrimPrefix(fullRespText, newStr)
+-					fullRespSlice = append(fullRespSlice, extraBit)
+-				}
++				newStr := strings.TrimSpace(fullfullRespText)
+ 				if vars.APIConfig.Knowledge.SaveChat {
+ 					Remember(openai.ChatCompletionMessage{
+ 						Role:    openai.ChatMessageRoleUser,
+@@ -346,12 +349,16 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
+ 
+ 			if err != nil {
+ 				logger.Println("Stream error: " + err.Error())
++				select {
++				case successIntent <- false:
++				default:
++				}
+ 				return
+ 			}
+ 
+ 			if len(response.Choices) == 0 {
+-				logger.Println("Empty response")
+-				return
++				// OpenAI-compatible servers may send usage-only terminal chunks.
++				continue
+ 			}
+ 
+ 			fullfullRespText = fullfullRespText + removeSpecialCharacters(response.Choices[0].Delta.Content)
+diff --git a/chipper/pkg/wirepod/ttr/kgsim_cmds.go b/chipper/pkg/wirepod/ttr/kgsim_cmds.go
+index 86241a7..ed550c1 100644
+--- a/chipper/pkg/wirepod/ttr/kgsim_cmds.go
++++ b/chipper/pkg/wirepod/ttr/kgsim_cmds.go
+@@ -294,10 +294,15 @@ func DoSayText(input string, robot *vector.Vector) error {
+ 		err := DoSayText_OpenAI(robot, input)
+ 		return err
+ 	}
++	spokenText := removeSpecialCharacters(input)
++	if containsRussian(spokenText) {
++		spokenText = russianToVectorPhonetics(spokenText)
++		logger.Println("Vector native voice phonetics: " + spokenText)
++	}
+ 	robot.Conn.SayText(
+ 		context.Background(),
+ 		&vectorpb.SayTextRequest{
+-			Text:           input,
++			Text:           spokenText,
+ 			UseVectorVoice: true,
+ 			DurationScalar: 0.95,
+ 		},

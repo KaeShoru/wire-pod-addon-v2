@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0
+
+- Added automatic Russian-to-Latin phonetic conversion before native Vector speech.
+- Kept Vector's built-in voice; no external TTS or Home Assistant relay is required.
+- Made OpenAI-compatible streaming tolerant of usage-only chunks and replies without final punctuation.
+
 ## 2.1.0
 
 - Added Home Assistant Ingress with a Wire-Pod entry for the sidebar.
