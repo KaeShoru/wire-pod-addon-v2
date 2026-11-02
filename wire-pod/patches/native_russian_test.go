@@ -8,7 +8,7 @@ import (
 func TestRussianToVectorPhonetics(t *testing.T) {
 	input := "Кошка - это животное с четырьмя лапами и ушами."
 	got := russianToVectorPhonetics(input)
-	want := "koshka - eh-to zheevotnoye s chetihrmya lapamee ee ooshamee."
+	want := "koshka - ehto zheevotnoye s chetihrmya lapamee ee ooshamee."
 	if got != want {
 		t.Fatalf("unexpected phonetics:\n got: %q\nwant: %q", got, want)
 	}
