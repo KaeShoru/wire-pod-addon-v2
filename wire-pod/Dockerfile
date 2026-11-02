@@ -5,7 +5,7 @@
 # is compiled on the Home Assistant host.
 FROM ghcr.io/kercre123/wire-pod@sha256:b8ac0d5593704592eacedd293a864e0504f4974b44e64a4c56a6fae19857fb94 AS upstream
 
-FROM golang:1.22.4-bullseye AS chipper-builder
+FROM golang:1.22.4-bookworm AS chipper-builder
 
 ARG BUILD_VERSION=dev
 
