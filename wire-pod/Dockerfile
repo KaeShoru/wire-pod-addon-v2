@@ -1,9 +1,48 @@
 # syntax=docker/dockerfile:1
 
-# Pinned multi-architecture upstream image. The digest contains linux/amd64 and
-# linux/arm64 manifests. This avoids compiling Go, Vosk or native libraries on
-# the Home Assistant host.
-FROM ghcr.io/kercre123/wire-pod@sha256:b8ac0d5593704592eacedd293a864e0504f4974b44e64a4c56a6fae19857fb94
+# Pinned multi-architecture upstream image. The source tree and Vosk runtime in
+# this image are reused to build a small patched chipper binary in CI. Nothing
+# is compiled on the Home Assistant host.
+FROM ghcr.io/kercre123/wire-pod@sha256:b8ac0d5593704592eacedd293a864e0504f4974b44e64a4c56a6fae19857fb94 AS upstream
+
+FROM golang:1.22.4-bookworm AS chipper-builder
+
+ARG BUILD_VERSION=dev
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CGO_ENABLED=1 \
+    LD_LIBRARY_PATH=/opt/vosk/libvosk
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libasound2-dev \
+        libopus-dev \
+        libopusfile-dev \
+        libsodium-dev \
+        patch \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=upstream /opt/wire-pod /src
+COPY --from=upstream /opt/vosk /opt/vosk
+COPY patches/native_russian.go /src/chipper/pkg/wirepod/ttr/native_russian.go
+COPY patches/native_russian_test.go /src/chipper/pkg/wirepod/ttr/native_russian_test.go
+COPY patches/native-russian-stream.patch /tmp/native-russian-stream.patch
+
+WORKDIR /src
+RUN patch -p1 </tmp/native-russian-stream.patch \
+    && cd chipper \
+    && CGO_CFLAGS="-I/opt/vosk/libvosk" \
+       CGO_LDFLAGS="-L/opt/vosk/libvosk -lvosk -lopus -lopusfile -lsodium -lasound -ldl -lpthread" \
+       go test ./pkg/wirepod/ttr \
+    && CGO_CFLAGS="-I/opt/vosk/libvosk" \
+       CGO_LDFLAGS="-L/opt/vosk/libvosk -lvosk -lopus -lopusfile -lsodium -lasound -ldl -lpthread" \
+       go build -tags "nolibopusfile" \
+       -ldflags "-s -w -X github.com/kercre123/wire-pod/chipper/pkg/vars.CommitSHA=kaeshoru-${BUILD_VERSION}" \
+       -o /tmp/chipper ./cmd/vosk
+
+FROM upstream
+
+COPY --from=chipper-builder /tmp/chipper /opt/wire-pod/chipper/chipper
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends nginx-core \
