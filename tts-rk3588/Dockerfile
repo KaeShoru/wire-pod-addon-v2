@@ -31,7 +31,7 @@ COPY librknnrt.so /usr/lib/librknnrt.so
 COPY model/ /opt/piper-models/ru_RU/
 
 RUN ldconfig \
-    && strings /usr/lib/librknnrt.so | grep -q "librknnrt version: 2.3.2" \
+    && python -c "assert b'librknnrt version: 2.3.2' in open('/usr/lib/librknnrt.so', 'rb').read()" \
     && cd /opt/piper-models/ru_RU \
     && sha256sum -c SHA256SUMS
 
