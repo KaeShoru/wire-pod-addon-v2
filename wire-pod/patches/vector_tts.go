@@ -1,4 +1,4 @@
-package ttr
+package wirepod_ttr
 
 import (
 	"bytes"
