@@ -69,7 +69,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Vector OpenVoice converter", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Vector OpenVoice converter", version="0.1.1", lifespan=lifespan)
 
 
 @app.get("/health")

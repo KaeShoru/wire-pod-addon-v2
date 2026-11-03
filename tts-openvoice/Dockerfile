@@ -33,6 +33,10 @@ RUN pip install --no-cache-dir \
 RUN git clone --filter=blob:none --no-checkout https://github.com/myshell-ai/OpenVoice.git /opt/OpenVoice \
     && git -C /opt/OpenVoice checkout "${OPENVOICE_COMMIT}" \
     && rm -rf /opt/OpenVoice/.git \
+    && sed -i \
+        -e "s/super().__init__(\*args, \*\*kwargs)/enable_watermark = kwargs.pop('enable_watermark', True)\\n        super().__init__(*args, **kwargs)/" \
+        -e "s/if kwargs.get('enable_watermark', True):/if enable_watermark:/" \
+        /opt/OpenVoice/openvoice/api.py \
     && mkdir -p /opt/openvoice-model \
     && curl --fail --location --retry 4 "${OPENVOICE_MODEL_BASE}/config.json" -o /opt/openvoice-model/config.json \
     && curl --fail --location --retry 4 "${OPENVOICE_MODEL_BASE}/checkpoint.pth" -o /opt/openvoice-model/checkpoint.pth \
