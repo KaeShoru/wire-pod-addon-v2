@@ -1,0 +1,16 @@
+services:
+  vector-openvoice:
+    image: ghcr.io/kaeshoru/wire-pod-addon-v2:tts-openvoice-0.1.0
+    container_name: vector-openvoice
+    restart: unless-stopped
+    ports:
+      - "8623:8623"
+    volumes:
+      - vector-openvoice-data:/data
+    environment:
+      TORCH_THREADS: "4"
+    cpus: 4
+    mem_limit: 3g
+
+volumes:
+  vector-openvoice-data:
