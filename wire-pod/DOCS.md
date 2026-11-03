@@ -1,5 +1,26 @@
 # Wire-Pod for Vector
 
+## Optional Russian voice through local TTS
+
+The app can request natural Russian speech from a LAN TTS service and apply a
+lightweight approximation of Vector's original Krotos vocoder before streaming
+the result to the robot. The TTS model does not run on the Home Assistant host.
+
+For the companion Silero service on the Orange Pi, set these app options:
+
+```yaml
+tts_url: http://ORANGE_PI_IP:8622/tts
+tts_speaker: eugene
+tts_speed: 0.96
+vector_vocoder: true
+vocoder_carrier_hz: 180
+vocoder_mix: 0.82
+```
+
+`vocoder_mix` is the main tuning control: `0` is the natural TTS voice and `1`
+is the fully synthetic signal. If the service is unreachable, Wire-Pod logs the
+error and automatically uses Vector's native phonetic fallback.
+
 Wire-Pod runs the local voice services used by Anki Vector. This Home Assistant
 app uses the official Wire-Pod container and keeps its state in Home Assistant's
 persistent `/data` volume.

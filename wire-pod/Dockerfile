@@ -26,6 +26,9 @@ COPY --from=upstream /opt/wire-pod /src
 COPY --from=upstream /opt/vosk /opt/vosk
 COPY patches/native_russian.go /src/chipper/pkg/wirepod/ttr/native_russian.go
 COPY patches/native_russian_test.go /src/chipper/pkg/wirepod/ttr/native_russian_test.go
+COPY patches/vector_tts.go /src/chipper/pkg/wirepod/ttr/vector_tts.go
+COPY patches/vector_vocoder.go /src/chipper/pkg/wirepod/ttr/vector_vocoder.go
+COPY patches/vector_vocoder_test.go /src/chipper/pkg/wirepod/ttr/vector_vocoder_test.go
 COPY patches/native-russian-stream.patch /tmp/native-russian-stream.patch
 
 WORKDIR /src
@@ -45,7 +48,7 @@ FROM upstream
 COPY --from=chipper-builder /tmp/chipper /opt/wire-pod/chipper/chipper
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nginx-core \
+    && apt-get install -y --no-install-recommends jq nginx-core \
     && rm -rf /var/lib/apt/lists/*
 
 # The upstream start script launches the server as a child of PID 1. Replace
