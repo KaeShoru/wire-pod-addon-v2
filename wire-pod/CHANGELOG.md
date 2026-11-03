@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.0
+
+- Added optional local Russian TTS through a configurable HTTP endpoint.
+- Added a lightweight 20-band vocoder based on Vector's original
+  `Krotos_Vocoder_12` soundbank settings: 180 Hz carrier, 5 ms envelopes and a
+  -2 dB output ceiling.
+- Kept the built-in phonetic voice as an automatic fallback when the external
+  TTS service is disabled or unavailable.
+- The Home Assistant host only performs inexpensive DSP; the TTS model remains
+  on a separate machine such as an Orange Pi.
+
 ## 2.2.0
 
 - Added automatic Russian-to-Latin phonetic conversion before native Vector speech.

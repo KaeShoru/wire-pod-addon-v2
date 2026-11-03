@@ -86,12 +86,19 @@ diff --git a/chipper/pkg/wirepod/ttr/kgsim_cmds.go b/chipper/pkg/wirepod/ttr/kgs
 index 86241a7..ed550c1 100644
 --- a/chipper/pkg/wirepod/ttr/kgsim_cmds.go
 +++ b/chipper/pkg/wirepod/ttr/kgsim_cmds.go
-@@ -294,10 +294,15 @@ func DoSayText(input string, robot *vector.Vector) error {
+@@ -294,10 +294,22 @@ func DoSayText(input string, robot *vector.Vector) error {
  		err := DoSayText_OpenAI(robot, input)
  		return err
  	}
 +	spokenText := removeSpecialCharacters(input)
 +	if containsRussian(spokenText) {
++		if os.Getenv("VECTOR_TTS_URL") != "" {
++			if err := DoSayText_VectorTTS(robot, spokenText); err == nil {
++				return nil
++			} else {
++				logger.Println("Local Vector TTS failed, using native phonetic fallback: " + err.Error())
++			}
++		}
 +		spokenText = russianToVectorPhonetics(spokenText)
 +		logger.Println("Vector native voice phonetics: " + spokenText)
 +	}
