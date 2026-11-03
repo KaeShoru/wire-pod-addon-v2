@@ -1,6 +1,6 @@
 services:
   vector-openvoice:
-    image: ghcr.io/kaeshoru/wire-pod-addon-v2:tts-openvoice-0.1.1
+    image: ghcr.io/kaeshoru/wire-pod-addon-v2:tts-openvoice-0.1.2
     container_name: vector-openvoice
     restart: unless-stopped
     ports:

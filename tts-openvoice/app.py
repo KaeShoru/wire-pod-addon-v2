@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -69,7 +70,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Vector OpenVoice converter", version="0.1.1", lifespan=lifespan)
+app = FastAPI(title="Vector OpenVoice converter", version="0.1.2", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -101,7 +102,9 @@ async def set_reference(audio: UploadFile = File(...)) -> dict[str, object]:
             _decode_audio(source, decoded)
             with _lock:
                 target = _embedding(decoded)
-                decoded.replace(REFERENCE)
+                staged = DATA / ".vector-reference.tmp"
+                shutil.copyfile(decoded, staged)
+                staged.replace(REFERENCE)
                 _target_se = target
         except Exception as exc:
             LOG.exception("Reference extraction failed")

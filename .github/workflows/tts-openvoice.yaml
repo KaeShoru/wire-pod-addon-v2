@@ -41,7 +41,7 @@ jobs:
           platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            ${{ env.IMAGE }}:tts-openvoice-0.1.1
+            ${{ env.IMAGE }}:tts-openvoice-0.1.2
             ${{ env.IMAGE }}:tts-openvoice-latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
