@@ -1,6 +1,10 @@
 services:
   vector-tts-silero:
+<<<<<<< HEAD
     image: ghcr.io/kaeshoru/wire-pod-addon-v2:tts-silero-0.4.0
+=======
+    image: ghcr.io/kaeshoru/wire-pod-addon-v2:tts-silero-0.3.0
+>>>>>>> origin/main
     container_name: vector-tts-silero
     network_mode: host
     environment:

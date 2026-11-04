@@ -24,7 +24,11 @@ MODEL_PATH = Path(os.getenv("SILERO_MODEL_PATH", "/opt/silero/v5_6_ru.pt"))
 SAMPLE_RATE = 24_000
 SPEAKERS = {"aidar", "baya", "kseniya", "xenia", "eugene"}
 PROFILES = {"natural", "vocoder_source", "vector", "vector_bright"}
+<<<<<<< HEAD
 ENGINES = {"silero", "espeak", "rhvoice"}
+=======
+ENGINES = {"silero", "espeak"}
+>>>>>>> origin/main
 # Classic eSpeak voice variants. The klatt family is the most "1980s robot"
 # sounding; m*/f* shift the register; croak/whisper add vocal texture.
 ESPEAK_VARIANTS = {
@@ -36,22 +40,32 @@ ESPEAK_VARIANTS = {
 }
 ESPEAK_WPM_BASE = 175
 ESPEAK_PITCH_BASE = 50
+<<<<<<< HEAD
 # RHVoice: statistical parametric synthesis — the classic intelligible
 # "screen reader robot" voice. `variant` selects one of its Russian voices.
 RHVOICE_VOICE_DIR = Path("/usr/share/RHVoice/voices")
 RHVOICE_DEFAULT_VOICE = "aleksandr"
+=======
+>>>>>>> origin/main
 
 _model = None
 _model_lock = threading.Lock()
 _loaded_at = 0.0
 _espeak_ready = False
+<<<<<<< HEAD
 _rhvoice_ready = False
 _rhvoice_voices: set[str] = set()
+=======
+>>>>>>> origin/main
 
 
 class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=1_000)
+<<<<<<< HEAD
     engine: Literal["silero", "espeak", "rhvoice"] = "silero"
+=======
+    engine: Literal["silero", "espeak"] = "silero"
+>>>>>>> origin/main
     speaker: str = "aidar"
     profile: Literal["natural", "vocoder_source", "vector", "vector_bright"] = (
         "natural"
@@ -85,6 +99,7 @@ def _detect_espeak() -> bool:
     return _espeak_ready
 
 
+<<<<<<< HEAD
 def _detect_rhvoice() -> bool:
     global _rhvoice_ready, _rhvoice_voices
     _rhvoice_voices = set()
@@ -104,6 +119,8 @@ def _detect_rhvoice() -> bool:
     return _rhvoice_ready
 
 
+=======
+>>>>>>> origin/main
 def _tensor_to_wav(audio: torch.Tensor) -> bytes:
     pcm = (
         audio.detach()
@@ -208,6 +225,7 @@ def _synth_espeak(text: str, variant: str, speed: float, pitch: float) -> bytes:
     return result.stdout
 
 
+<<<<<<< HEAD
 def _synth_rhvoice(text: str, voice: str, speed: float, pitch: float) -> bytes:
     """Statistical parametric synthesis via RHVoice.
 
@@ -252,6 +270,8 @@ def _synth_rhvoice(text: str, voice: str, speed: float, pitch: float) -> bytes:
         Path(out_path).unlink(missing_ok=True)
 
 
+=======
+>>>>>>> origin/main
 def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> bytes:
     command = (
         "ffmpeg",
@@ -289,11 +309,18 @@ def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> byte
 async def lifespan(_: FastAPI):
     _load_model()
     _detect_espeak()
+<<<<<<< HEAD
     _detect_rhvoice()
     yield
 
 
 app = FastAPI(title="Vector Silero TTS", version="0.4.0", lifespan=lifespan)
+=======
+    yield
+
+
+app = FastAPI(title="Vector Silero TTS", version="0.3.0", lifespan=lifespan)
+>>>>>>> origin/main
 
 
 @app.get("/health")
@@ -306,7 +333,10 @@ def health() -> dict[str, object]:
         "engines": {
             "silero": _model is not None,
             "espeak": _espeak_ready,
+<<<<<<< HEAD
             "rhvoice": _rhvoice_ready,
+=======
+>>>>>>> origin/main
         },
     }
 
@@ -318,8 +348,11 @@ def voices() -> dict[str, object]:
         "speakers": sorted(SPEAKERS),
         "profiles": sorted(PROFILES),
         "espeak_variants": sorted(ESPEAK_VARIANTS),
+<<<<<<< HEAD
         "rhvoice_voices": sorted(_rhvoice_voices),
         "rhvoice_default_voice": RHVOICE_DEFAULT_VOICE,
+=======
+>>>>>>> origin/main
     }
 
 
@@ -343,6 +376,7 @@ def tts(request: TTSRequest) -> Response:
                 request.text.strip(), request.variant, request.speed, request.pitch
             )
             wav = _apply_profile(raw, "natural", 1.0, 1.0)
+<<<<<<< HEAD
         elif request.engine == "rhvoice":
             if not _rhvoice_ready:
                 raise HTTPException(
@@ -360,6 +394,8 @@ def tts(request: TTSRequest) -> Response:
                 request.text.strip(), voice, request.speed, request.pitch
             )
             wav = _apply_profile(raw, "natural", 1.0, 1.0)
+=======
+>>>>>>> origin/main
         else:
             if _model is None:
                 raise HTTPException(status_code=503, detail="model is not ready")

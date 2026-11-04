@@ -7,12 +7,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     SILERO_MODEL_PATH=/opt/silero/v5_6_ru.pt \
     TORCH_THREADS=4
 
+<<<<<<< HEAD
 # RHVoice lives in Debian non-free, while the slim python images enable only main.
 RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl espeak-ng ffmpeg rhvoice rhvoice-russian \
+=======
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl espeak-ng ffmpeg \
+>>>>>>> origin/main
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
