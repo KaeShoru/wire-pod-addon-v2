@@ -25,7 +25,24 @@ curl -f http://127.0.0.1:8622/tts \
   -o vector-aidar.wav
 ```
 
-Speakers: `aidar`, `baya`, `kseniya`, `xenia`, `eugene`.
+Engines (`engine` field, default `silero`):
+
+- `silero` — neural Russian voices. Speakers: `aidar`, `baya`, `kseniya`,
+  `xenia`, `eugene`.
+- `espeak` — classic Klatt formant synthesis (the "robot voice" of the
+  2000s), Russian included. Optional `variant` selects an eSpeak NG voice
+  variant: empty for the plain voice, `m1`–`m7`, `f1`–`f5`, `klatt`,
+  `klatt2`, `klatt3`, `klatt4`, `croak`, `whisper`, `whisperf`. The
+  `speaker` field is ignored for this engine; `speed` maps to words per
+  minute and `pitch` to the eSpeak pitch control. Profiles other than
+  `natural` are not applied to eSpeak output.
+
+```bash
+curl -f http://127.0.0.1:8622/tts \
+  -H 'Content-Type: application/json' \
+  --data '{"text":"Привет! Я Вектор.","engine":"espeak","variant":"klatt","speed":0.9,"pitch":1.1}' \
+  -o vector-espeak-klatt.wav
+```
 
 Profiles:
 
