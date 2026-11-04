@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.1
+
+- Added the RHVoice engine choice (`tts_engine: rhvoice`): statistical
+  parametric Russian voices — clearly synthetic but smooth and intelligible,
+  the classic screen-reader robot sound. `tts_variant` picks the RHVoice
+  voice (e.g. `aleksandr`, `anna`, `elena`, `irina`; empty = `aleksandr`).
+
 ## 2.4.0
 
 - Added a selectable TTS engine: `silero` (neural voices) or `espeak`
