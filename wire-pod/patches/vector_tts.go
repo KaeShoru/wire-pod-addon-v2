@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -70,7 +71,7 @@ func localTTS(text string) ([]byte, error) {
 	return body, nil
 }
 
-func streamVectorPCM(robot *vector.Vector, pcm []byte) error {
+func streamVectorPCM(robot *vector.Vector, pcm []byte, volume uint32) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, err := robot.Conn.ExternalAudioStreamPlayback(ctx)
@@ -78,7 +79,7 @@ func streamVectorPCM(robot *vector.Vector, pcm []byte) error {
 		return err
 	}
 	if err := client.Send(&vectorpb.ExternalAudioStreamRequest{AudioRequestType: &vectorpb.ExternalAudioStreamRequest_AudioStreamPrepare{
-		AudioStreamPrepare: &vectorpb.ExternalAudioStreamPrepare{AudioFrameRate: vectorAudioRate, AudioVolume: 100},
+		AudioStreamPrepare: &vectorpb.ExternalAudioStreamPrepare{AudioFrameRate: vectorAudioRate, AudioVolume: volume},
 	}}); err != nil {
 		return err
 	}
@@ -144,5 +145,7 @@ func DoSayText_VectorTTS(robot *vector.Vector, text string) error {
 			envFloat("VECTOR_TTS_VOCODER_MIX", 0.82),
 		)
 	}
-	return streamVectorPCM(robot, pcm16Bytes(samples))
+	volume := math.Round(envFloat("VECTOR_TTS_VOLUME", 50))
+	volume = math.Max(10, math.Min(100, volume))
+	return streamVectorPCM(robot, pcm16Bytes(samples), uint32(volume))
 }

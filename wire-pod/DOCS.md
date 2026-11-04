@@ -10,7 +10,8 @@ For the companion Silero service on the Orange Pi, set these app options:
 ```yaml
 tts_url: http://ORANGE_PI_IP:8622/tts
 tts_speaker: eugene
-tts_speed: 0.96
+tts_speed: 0.82
+tts_volume: 50
 vector_vocoder: false
 vocoder_carrier_hz: 180
 vocoder_mix: 0.82
@@ -22,6 +23,10 @@ voices. When enabled, `vocoder_mix` is its main tuning control: `0` is the
 natural TTS voice and `1` is the fully synthetic signal. If the service is
 unreachable, Wire-Pod logs the error and automatically uses Vector's native
 phonetic fallback.
+
+`tts_speed` controls the duration without changing pitch. `tts_volume` is the
+external playback level sent to Vector; `50` matches the official Vector SDK
+default and avoids overdriving the robot's small speaker.
 
 Wire-Pod runs the local voice services used by Anki Vector. This Home Assistant
 app uses the official Wire-Pod container and keeps its state in Home Assistant's
