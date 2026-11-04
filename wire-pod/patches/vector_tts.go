@@ -23,6 +23,7 @@ type localTTSRequest struct {
 	Speaker string  `json:"speaker"`
 	Profile string  `json:"profile"`
 	Speed   float64 `json:"speed"`
+	Pitch   float64 `json:"pitch"`
 }
 
 func envFloat(name string, fallback float64) float64 {
@@ -42,9 +43,14 @@ func localTTS(text string) ([]byte, error) {
 	if speaker == "" {
 		speaker = "eugene"
 	}
+	profile := strings.TrimSpace(os.Getenv("VECTOR_TTS_PROFILE"))
+	if profile == "" {
+		profile = "natural"
+	}
 	payload, err := json.Marshal(localTTSRequest{
-		Text: text, Speaker: speaker, Profile: "natural",
-		Speed: envFloat("VECTOR_TTS_SPEED", 0.96),
+		Text: text, Speaker: speaker, Profile: profile,
+		Speed: envFloat("VECTOR_TTS_SPEED", 0.82),
+		Pitch: envFloat("VECTOR_TTS_PITCH", 1.0),
 	})
 	if err != nil {
 		return nil, err

@@ -21,7 +21,7 @@ Example:
 ```bash
 curl -f http://127.0.0.1:8622/tts \
   -H 'Content-Type: application/json' \
-  --data '{"text":"Привет! Я Вектор.","speaker":"aidar","profile":"vector","speed":0.92}' \
+  --data '{"text":"Привет! Я Вектор.","speaker":"aidar","profile":"vocoder_source","speed":0.92,"pitch":1.10}' \
   -o vector-aidar.wav
 ```
 
@@ -30,6 +30,8 @@ Speakers: `aidar`, `baya`, `kseniya`, `xenia`, `eugene`.
 Profiles:
 
 - `natural` — uncoloured Silero output, with only tempo and peak limiting.
+- `vocoder_source` — clean pitch and formant matching before Wire-Pod's
+  vocoder; no bit crushing or compression. Use `pitch` to tune it.
 - `vector` — moderate formant lift and subtle synthetic texture.
 - `vector_bright` — a deliberately stronger comparison profile.
 
