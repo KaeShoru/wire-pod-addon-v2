@@ -22,7 +22,7 @@ func TestAmplifyPCM16BoostsWithoutClipping(t *testing.T) {
 	}
 	// Quiet samples sit on the near-linear part of the tanh knee and must
 	// actually get louder.
-	if got[2] <= input[2] || got[4] >= input[4] || got[4] <= 0 {
+	if got[2] >= input[2] || got[4] <= input[4] || got[4] <= 0 {
 		t.Fatalf("gain did not boost quiet samples: %d -> %d", input[4], got[4])
 	}
 	// Hot samples must be limited below full scale instead of wrapping.
