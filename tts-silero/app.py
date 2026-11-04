@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -22,20 +23,35 @@ MODEL_PATH = Path(os.getenv("SILERO_MODEL_PATH", "/opt/silero/v5_6_ru.pt"))
 SAMPLE_RATE = 24_000
 SPEAKERS = {"aidar", "baya", "kseniya", "xenia", "eugene"}
 PROFILES = {"natural", "vocoder_source", "vector", "vector_bright"}
+ENGINES = {"silero", "espeak"}
+# Classic eSpeak voice variants. The klatt family is the most "1980s robot"
+# sounding; m*/f* shift the register; croak/whisper add vocal texture.
+ESPEAK_VARIANTS = {
+    "",
+    "m1", "m2", "m3", "m4", "m5", "m6", "m7",
+    "f1", "f2", "f3", "f4", "f5",
+    "klatt", "klatt2", "klatt3", "klatt4",
+    "croak", "whisper", "whisperf",
+}
+ESPEAK_WPM_BASE = 175
+ESPEAK_PITCH_BASE = 50
 
 _model = None
 _model_lock = threading.Lock()
 _loaded_at = 0.0
+_espeak_ready = False
 
 
 class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=1_000)
+    engine: Literal["silero", "espeak"] = "silero"
     speaker: str = "aidar"
     profile: Literal["natural", "vocoder_source", "vector", "vector_bright"] = (
         "natural"
     )
     speed: float = Field(default=0.92, ge=0.75, le=1.20)
     pitch: float = Field(default=1.0, ge=0.60, le=1.80)
+    variant: str = ""
 
 
 def _load_model() -> None:
@@ -50,6 +66,16 @@ def _load_model() -> None:
     _model.to(torch.device("cpu"))
     _loaded_at = time.time()
     LOG.info("Silero model ready in %.2fs", time.monotonic() - started)
+
+
+def _detect_espeak() -> bool:
+    global _espeak_ready
+    _espeak_ready = shutil.which("espeak-ng") is not None
+    if _espeak_ready:
+        LOG.info("eSpeak NG engine available (classic formant synthesis)")
+    else:
+        LOG.warning("espeak-ng binary not found; espeak engine disabled")
+    return _espeak_ready
 
 
 def _tensor_to_wav(audio: torch.Tensor) -> bytes:
@@ -121,6 +147,41 @@ def _filter_for(profile: str, speed: float, pitch: float) -> str:
     )
 
 
+def _synth_espeak(text: str, variant: str, speed: float, pitch: float) -> bytes:
+    """Classic formant synthesis via eSpeak NG.
+
+    This is intentionally a robotic 2000s-style voice: it does not try to
+    sound human, which makes it a far better source for Vector's vocoder
+    character than a neural TTS. `speed` and `pitch` are multipliers mapped
+    onto eSpeak's native words-per-minute and 0-99 pitch scales.
+    """
+    voice = "ru" + (f"+{variant}" if variant else "")
+    wpm = max(80, min(370, round(ESPEAK_WPM_BASE * speed)))
+    espeak_pitch = max(0, min(99, round(ESPEAK_PITCH_BASE * pitch)))
+    command = (
+        "espeak-ng",
+        "-v",
+        voice,
+        "-s",
+        str(wpm),
+        "-p",
+        str(espeak_pitch),
+        "--stdout",
+        text,
+    )
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=60,
+    )
+    if result.returncode != 0 or not result.stdout.startswith(b"RIFF"):
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"espeak-ng failed ({result.returncode}): {detail}")
+    return result.stdout
+
+
 def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> bytes:
     command = (
         "ffmpeg",
@@ -157,10 +218,11 @@ def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> byte
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _load_model()
+    _detect_espeak()
     yield
 
 
-app = FastAPI(title="Vector Silero TTS", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Vector Silero TTS", version="0.3.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -170,41 +232,71 @@ def health() -> dict[str, object]:
         "model": "silero-v5_6_ru",
         "sample_rate": SAMPLE_RATE,
         "loaded_at": _loaded_at,
+        "engines": {
+            "silero": _model is not None,
+            "espeak": _espeak_ready,
+        },
     }
 
 
 @app.get("/voices")
 def voices() -> dict[str, object]:
-    return {"speakers": sorted(SPEAKERS), "profiles": sorted(PROFILES)}
+    return {
+        "engines": sorted(ENGINES),
+        "speakers": sorted(SPEAKERS),
+        "profiles": sorted(PROFILES),
+        "espeak_variants": sorted(ESPEAK_VARIANTS),
+    }
 
 
 @app.post("/tts")
 def tts(request: TTSRequest) -> Response:
-    if _model is None:
-        raise HTTPException(status_code=503, detail="model is not ready")
-    if request.speaker not in SPEAKERS:
-        raise HTTPException(status_code=400, detail="unknown speaker")
-
     started = time.monotonic()
     try:
-        with _model_lock, torch.inference_mode():
-            audio = _model.apply_tts(
-                text=request.text.strip(),
-                speaker=request.speaker,
-                sample_rate=SAMPLE_RATE,
+        if request.engine == "espeak":
+            if not _espeak_ready:
+                raise HTTPException(
+                    status_code=503, detail="espeak-ng engine is not available"
+                )
+            if request.variant not in ESPEAK_VARIANTS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"unknown espeak variant {request.variant!r}",
+                )
+            # eSpeak already sounds robotic; apply only loudness normalisation,
+            # not the Silero-specific timbre profiles.
+            raw = _synth_espeak(
+                request.text.strip(), request.variant, request.speed, request.pitch
             )
-        wav = _apply_profile(
-            _tensor_to_wav(audio), request.profile, request.speed, request.pitch
-        )
+            wav = _apply_profile(raw, "natural", 1.0, 1.0)
+        else:
+            if _model is None:
+                raise HTTPException(status_code=503, detail="model is not ready")
+            if request.speaker not in SPEAKERS:
+                raise HTTPException(status_code=400, detail="unknown speaker")
+            with _model_lock, torch.inference_mode():
+                audio = _model.apply_tts(
+                    text=request.text.strip(),
+                    speaker=request.speaker,
+                    sample_rate=SAMPLE_RATE,
+                )
+            wav = _apply_profile(
+                _tensor_to_wav(audio), request.profile, request.speed, request.pitch
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
         LOG.exception("Synthesis failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     elapsed = time.monotonic() - started
     LOG.info(
-        "Synthesized %d chars speaker=%s profile=%s speed=%.2f pitch=%.2f in %.2fs",
+        "Synthesized %d chars engine=%s speaker=%s variant=%s profile=%s "
+        "speed=%.2f pitch=%.2f in %.2fs",
         len(request.text),
+        request.engine,
         request.speaker,
+        request.variant,
         request.profile,
         request.speed,
         request.pitch,

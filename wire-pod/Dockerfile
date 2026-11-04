@@ -29,6 +29,7 @@ COPY patches/native_russian_test.go /src/chipper/pkg/wirepod/ttr/native_russian_
 COPY patches/vector_tts.go /src/chipper/pkg/wirepod/ttr/vector_tts.go
 COPY patches/vector_vocoder.go /src/chipper/pkg/wirepod/ttr/vector_vocoder.go
 COPY patches/vector_vocoder_test.go /src/chipper/pkg/wirepod/ttr/vector_vocoder_test.go
+COPY patches/vector_tts_amplify_test.go /src/chipper/pkg/wirepod/ttr/vector_tts_amplify_test.go
 COPY patches/native-russian-stream.patch /tmp/native-russian-stream.patch
 
 WORKDIR /src

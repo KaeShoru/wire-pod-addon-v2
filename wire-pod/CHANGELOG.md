@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.4.0
+
+- Added a selectable TTS engine: `silero` (neural voices) or `espeak`
+  (classic formant synthesis with robotic variants such as `klatt`, `m3`,
+  `croak`, `whisper`) via the new `tts_engine` and `tts_variant` options.
+- Raised the TTS volume ceiling from 100 to 200: values above 100 amplify the
+  PCM with a soft limiter instead of hard clipping, so quiet voices can be
+  boosted without crackling.
+
 ## 2.3.5
 
 - Added configurable TTS profile and pitch parameters for preparing the source

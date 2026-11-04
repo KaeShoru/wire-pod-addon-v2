@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TORCH_THREADS=4
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg \
+    && apt-get install -y --no-install-recommends ca-certificates curl espeak-ng ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \

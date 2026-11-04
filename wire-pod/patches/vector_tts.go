@@ -20,10 +20,12 @@ import (
 
 type localTTSRequest struct {
 	Text    string  `json:"text"`
+	Engine  string  `json:"engine,omitempty"`
 	Speaker string  `json:"speaker"`
 	Profile string  `json:"profile"`
 	Speed   float64 `json:"speed"`
 	Pitch   float64 `json:"pitch"`
+	Variant string  `json:"variant,omitempty"`
 }
 
 func envFloat(name string, fallback float64) float64 {
@@ -49,8 +51,10 @@ func localTTS(text string) ([]byte, error) {
 	}
 	payload, err := json.Marshal(localTTSRequest{
 		Text: text, Speaker: speaker, Profile: profile,
-		Speed: envFloat("VECTOR_TTS_SPEED", 0.82),
-		Pitch: envFloat("VECTOR_TTS_PITCH", 1.0),
+		Engine:  strings.TrimSpace(os.Getenv("VECTOR_TTS_ENGINE")),
+		Variant: strings.TrimSpace(os.Getenv("VECTOR_TTS_VARIANT")),
+		Speed:   envFloat("VECTOR_TTS_SPEED", 0.82),
+		Pitch:   envFloat("VECTOR_TTS_PITCH", 1.0),
 	})
 	if err != nil {
 		return nil, err
@@ -152,6 +156,24 @@ func DoSayText_VectorTTS(robot *vector.Vector, text string) error {
 		)
 	}
 	volume := math.Round(envFloat("VECTOR_TTS_VOLUME", 50))
-	volume = math.Max(10, math.Min(100, volume))
+	volume = math.Max(10, math.Min(200, volume))
+	if volume > 100 {
+		// Vector's SDK volume stops at 100. Values above 100 pre-amplify the PCM
+		// with a soft limiter so the speaker is driven harder without harsh
+		// digital clipping.
+		samples = amplifyPCM16(samples, volume/100)
+		volume = 100
+	}
 	return streamVectorPCM(robot, pcm16Bytes(samples), uint32(volume))
+}
+
+// amplifyPCM16 boosts samples above the robot's maximum SDK volume using a
+// soft-knee limiter instead of hard clipping.
+func amplifyPCM16(samples []int16, gain float64) []int16 {
+	out := make([]int16, len(samples))
+	for i, sample := range samples {
+		value := math.Tanh(float64(sample) / 32768 * gain)
+		out[i] = int16(math.Round(value * 32767))
+	}
+	return out
 }
