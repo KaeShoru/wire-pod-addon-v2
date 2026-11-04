@@ -22,8 +22,14 @@ func decodePCM16WAV(data []byte) ([]int16, int, error) {
 		name := string(data[offset : offset+4])
 		size := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
 		offset += 8
-		if size < 0 || offset+size > len(data) {
-			return nil, 0, errors.New("invalid WAV chunk length")
+		if size < 0 || size > len(data)-offset {
+			// WAV written to a non-seekable pipe cannot have its final data
+			// length patched into the header. FFmpeg represents that as
+			// 0xffffffff; in that case the data block is the remaining input.
+			if name != "data" {
+				return nil, 0, errors.New("invalid WAV chunk length")
+			}
+			size = len(data) - offset
 		}
 		switch name {
 		case "fmt ":

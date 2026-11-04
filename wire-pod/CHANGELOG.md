@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.1
+
+- Accept streaming WAV responses whose `data` length is the FFmpeg
+  `0xffffffff` sentinel instead of rejecting them and falling back to native
+  phonetic speech.
+
 ## 2.3.0
 
 - Added optional local Russian TTS through a configurable HTTP endpoint.
