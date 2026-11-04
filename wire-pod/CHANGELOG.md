@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.5
+
+- Added configurable TTS profile and pitch parameters for preparing the source
+  voice before the experimental vocoder.
+- Added support for the companion Silero `vocoder_source` profile, which shifts
+  pitch and formants without adding compression or bit crushing.
+
 ## 2.3.4
 
 - Fixed the experimental vocoder wet/dry path so its saturation applies only

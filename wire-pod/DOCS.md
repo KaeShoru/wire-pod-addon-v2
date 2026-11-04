@@ -11,6 +11,8 @@ For the companion Silero service on the Orange Pi, set these app options:
 tts_url: http://ORANGE_PI_IP:8622/tts
 tts_speaker: eugene
 tts_speed: 0.82
+tts_profile: natural
+tts_pitch: 1.0
 tts_volume: 50
 vector_vocoder: false
 vocoder_carrier_hz: 180
@@ -28,6 +30,11 @@ phonetic fallback.
 `tts_speed` controls the duration without changing pitch. `tts_volume` is the
 external playback level sent to Vector; `50` matches the official Vector SDK
 default and avoids overdriving the robot's small speaker.
+
+For a pitch-matched source before the experimental vocoder, use
+`tts_profile: vocoder_source`. This profile changes pitch and formants without
+bit crushing or compression. `tts_pitch` controls the ratio: `1.10` raises
+`aidar` into roughly the same fundamental range as the reference Vector voice.
 
 Wire-Pod runs the local voice services used by Anki Vector. This Home Assistant
 app uses the official Wire-Pod container and keeps its state in Home Assistant's

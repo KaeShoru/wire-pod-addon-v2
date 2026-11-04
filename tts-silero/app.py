@@ -21,7 +21,7 @@ LOG = logging.getLogger("vector_tts")
 MODEL_PATH = Path(os.getenv("SILERO_MODEL_PATH", "/opt/silero/v5_6_ru.pt"))
 SAMPLE_RATE = 24_000
 SPEAKERS = {"aidar", "baya", "kseniya", "xenia", "eugene"}
-PROFILES = {"natural", "vector", "vector_bright"}
+PROFILES = {"natural", "vocoder_source", "vector", "vector_bright"}
 
 _model = None
 _model_lock = threading.Lock()
@@ -31,8 +31,11 @@ _loaded_at = 0.0
 class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=1_000)
     speaker: str = "aidar"
-    profile: Literal["natural", "vector", "vector_bright"] = "vector"
+    profile: Literal["natural", "vocoder_source", "vector", "vector_bright"] = (
+        "natural"
+    )
     speed: float = Field(default=0.92, ge=0.75, le=1.20)
+    pitch: float = Field(default=1.0, ge=0.60, le=1.80)
 
 
 def _load_model() -> None:
@@ -69,9 +72,26 @@ def _tensor_to_wav(audio: torch.Tensor) -> bytes:
     return output.getvalue()
 
 
-def _filter_for(profile: str, speed: float) -> str:
+def _filter_for(profile: str, speed: float, pitch: float) -> str:
     if profile == "natural":
         return f"atempo={speed:.5f},alimiter=limit=0.92"
+
+    if profile == "vocoder_source":
+        # Prepare a clean, pitch-matched source for the downstream vocoder.
+        # Shifting formants with the fundamental is intentional here; keeping
+        # male formants while raising only F0 still sounds like a pitched man.
+        return ",".join(
+            (
+                (
+                    "rubberband="
+                    f"pitch={pitch:.7f}:tempo={speed:.7f}:"
+                    "formant=shifted:transients=smooth:detector=soft"
+                ),
+                "highpass=f=120",
+                "lowpass=f=7800",
+                "alimiter=limit=0.90",
+            )
+        )
 
     # Vector sounds small and bright, but its fundamental pitch is not unusually
     # high. Shift the formants upward while restoring the fundamental with
@@ -101,7 +121,7 @@ def _filter_for(profile: str, speed: float) -> str:
     )
 
 
-def _apply_profile(wav: bytes, profile: str, speed: float) -> bytes:
+def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> bytes:
     command = (
         "ffmpeg",
         "-hide_banner",
@@ -110,7 +130,7 @@ def _apply_profile(wav: bytes, profile: str, speed: float) -> bytes:
         "-i",
         "pipe:0",
         "-af",
-        _filter_for(profile, speed),
+        _filter_for(profile, speed, pitch),
         "-ac",
         "1",
         "-ar",
@@ -140,7 +160,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Vector Silero TTS", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Vector Silero TTS", version="0.2.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -173,18 +193,21 @@ def tts(request: TTSRequest) -> Response:
                 speaker=request.speaker,
                 sample_rate=SAMPLE_RATE,
             )
-        wav = _apply_profile(_tensor_to_wav(audio), request.profile, request.speed)
+        wav = _apply_profile(
+            _tensor_to_wav(audio), request.profile, request.speed, request.pitch
+        )
     except Exception as exc:
         LOG.exception("Synthesis failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     elapsed = time.monotonic() - started
     LOG.info(
-        "Synthesized %d chars speaker=%s profile=%s speed=%.2f in %.2fs",
+        "Synthesized %d chars speaker=%s profile=%s speed=%.2f pitch=%.2f in %.2fs",
         len(request.text),
         request.speaker,
         request.profile,
         request.speed,
+        request.pitch,
         elapsed,
     )
     return Response(
