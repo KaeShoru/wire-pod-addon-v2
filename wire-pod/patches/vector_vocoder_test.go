@@ -38,6 +38,20 @@ func TestDecodePCM16WAVDownmixesStereo(t *testing.T) {
 	}
 }
 
+func TestDecodePCM16StreamingWAV(t *testing.T) {
+	wav := testWAV(24000, 1, []int16{1000, -2000, 3000})
+	// FFmpeg uses this sentinel when writing WAV to stdout because it cannot
+	// seek back and update the data length after encoding.
+	binary.LittleEndian.PutUint32(wav[40:], ^uint32(0))
+	got, rate, err := decodePCM16WAV(wav)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rate != 24000 || len(got) != 3 || got[0] != 1000 || got[1] != -2000 || got[2] != 3000 {
+		t.Fatalf("rate=%d samples=%v", rate, got)
+	}
+}
+
 func TestResamplePCM16(t *testing.T) {
 	input := make([]int16, 2400)
 	for i := range input {
