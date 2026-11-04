@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.3
+
+- Added a configurable external TTS playback volume and changed its default
+  from the previously hard-coded maximum of 100 to the Vector SDK default of
+  50, reducing harsh compression and speaker distortion.
+- Reduced the default Silero speed from 0.96 to 0.82 for clearer Russian speech.
+
 ## 2.3.2
 
 - Disabled the experimental vocoder by default so local Russian TTS is clear
