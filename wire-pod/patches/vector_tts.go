@@ -124,8 +124,9 @@ func streamVectorPCM(robot *vector.Vector, pcm []byte) error {
 }
 
 // DoSayText_VectorTTS gets natural Russian speech from the configured local
-// service, applies the lightweight Vector soundbank approximation, and streams
-// it to the robot. No model is loaded on the Home Assistant host.
+// service and streams it to the robot. The experimental lightweight vocoder is
+// only applied when explicitly enabled. No model is loaded on the Home
+// Assistant host.
 func DoSayText_VectorTTS(robot *vector.Vector, text string) error {
 	wav, err := localTTS(text)
 	if err != nil {
@@ -136,7 +137,7 @@ func DoSayText_VectorTTS(robot *vector.Vector, text string) error {
 		return err
 	}
 	samples = resamplePCM16(samples, rate, vectorAudioRate)
-	if strings.ToLower(strings.TrimSpace(os.Getenv("VECTOR_TTS_VOCODER"))) != "false" {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("VECTOR_TTS_VOCODER")), "true") {
 		samples = vectorVocodePCM(
 			samples,
 			envFloat("VECTOR_TTS_CARRIER_HZ", 180),
