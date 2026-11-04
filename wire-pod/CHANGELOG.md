@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.2
+
+- Disabled the experimental vocoder by default so local Russian TTS is clear
+  and natural on first use.
+- Made the vocoder opt-in: an absent or empty setting can no longer enable the
+  effect accidentally.
+
 ## 2.3.1
 
 - Accept streaming WAV responses whose `data` length is the FFmpeg
