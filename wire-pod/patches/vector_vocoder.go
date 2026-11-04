@@ -128,6 +128,9 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	}
 	carrierHz = math.Max(100, math.Min(260, carrierHz))
 	wetMix = math.Max(0, math.Min(1, wetMix))
+	if wetMix == 0 {
+		return append([]int16(nil), input...)
+	}
 
 	const bandCount = 20
 	const low = 140.0
@@ -201,8 +204,10 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	peak := 0.0
 	for i, sample := range input {
 		dry := float64(sample) / 32768
-		value := (1-wetMix)*dry + wetMix*wet[i]*wetGain
-		combined[i] = math.Tanh(value * 1.35)
+		// Saturate only the synthetic carrier. Applying tanh after the wet/dry
+		// mix compressed the original TTS even at low mix values.
+		processedWet := math.Tanh(wet[i] * wetGain)
+		combined[i] = (1-wetMix)*dry + wetMix*processedWet
 		peak = math.Max(peak, math.Abs(combined[i]))
 	}
 	ceiling := math.Pow(10, -2.0/20.0)

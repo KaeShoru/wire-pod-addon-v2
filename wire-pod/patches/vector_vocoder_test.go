@@ -90,3 +90,16 @@ func TestVectorVocoderIsBoundedAndChangesSignal(t *testing.T) {
 		t.Fatalf("vocoder did not produce a transformed signal")
 	}
 }
+
+func TestVectorVocoderZeroMixPreservesSignal(t *testing.T) {
+	input := []int16{-24000, -12000, -1, 0, 1, 12000, 24000}
+	got := vectorVocodePCM(input, 180, 0)
+	if len(got) != len(input) {
+		t.Fatalf("got %d samples, want %d", len(got), len(input))
+	}
+	for i := range input {
+		if got[i] != input[i] {
+			t.Fatalf("sample %d changed from %d to %d", i, input[i], got[i])
+		}
+	}
+}

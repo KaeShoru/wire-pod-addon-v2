@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.4
+
+- Fixed the experimental vocoder wet/dry path so its saturation applies only
+  to the synthetic layer instead of compressing the original TTS voice.
+- Reduced the suggested vocoder mix from 0.82 to 0.18 and made a zero mix an
+  exact, inexpensive pass-through.
+
 ## 2.3.3
 
 - Added a configurable external TTS playback volume and changed its default

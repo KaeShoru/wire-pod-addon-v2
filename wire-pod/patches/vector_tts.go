@@ -142,7 +142,7 @@ func DoSayText_VectorTTS(robot *vector.Vector, text string) error {
 		samples = vectorVocodePCM(
 			samples,
 			envFloat("VECTOR_TTS_CARRIER_HZ", 180),
-			envFloat("VECTOR_TTS_VOCODER_MIX", 0.82),
+			envFloat("VECTOR_TTS_VOCODER_MIX", 0.18),
 		)
 	}
 	volume := math.Round(envFloat("VECTOR_TTS_VOLUME", 50))

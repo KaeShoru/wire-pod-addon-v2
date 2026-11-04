@@ -1,5 +1,5 @@
 name: Wire-Pod for Vector
-version: "2.3.3"
+version: "2.3.4"
 slug: wire_pod
 description: Local voice server for Anki Vector, packaged for low-memory Home Assistant systems
 url: https://github.com/KaeShoru/wire-pod-addon-v2
@@ -21,7 +21,7 @@ options:
   tts_volume: 50
   vector_vocoder: false
   vocoder_carrier_hz: 180
-  vocoder_mix: 0.82
+  vocoder_mix: 0.18
 schema:
   tts_url: str
   tts_speaker: list(aidar|baya|kseniya|xenia|eugene)

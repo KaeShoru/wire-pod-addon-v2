@@ -14,13 +14,14 @@ tts_speed: 0.82
 tts_volume: 50
 vector_vocoder: false
 vocoder_carrier_hz: 180
-vocoder_mix: 0.82
+vocoder_mix: 0.18
 ```
 
 Leave `vector_vocoder` disabled for clear speech. The built-in vocoder is an
 experimental effect rather than voice cloning and can heavily distort some
 voices. When enabled, `vocoder_mix` is its main tuning control: `0` is the
-natural TTS voice and `1` is the fully synthetic signal. If the service is
+natural TTS voice and `1` is the fully synthetic signal. Start around `0.18`;
+higher values deliberately replace more of the clear voice. If the service is
 unreachable, Wire-Pod logs the error and automatically uses Vector's native
 phonetic fallback.
 
