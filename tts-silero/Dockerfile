@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim-trixie
 
 ARG SILERO_MODEL_URL=https://models.silero.ai/models/tts/ru/v5_6_ru.pt
 
@@ -8,7 +8,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TORCH_THREADS=4
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl espeak-ng ffmpeg \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl espeak-ng ffmpeg rhvoice rhvoice-russian \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \

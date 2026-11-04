@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import wave
@@ -23,7 +24,7 @@ MODEL_PATH = Path(os.getenv("SILERO_MODEL_PATH", "/opt/silero/v5_6_ru.pt"))
 SAMPLE_RATE = 24_000
 SPEAKERS = {"aidar", "baya", "kseniya", "xenia", "eugene"}
 PROFILES = {"natural", "vocoder_source", "vector", "vector_bright"}
-ENGINES = {"silero", "espeak"}
+ENGINES = {"silero", "espeak", "rhvoice"}
 # Classic eSpeak voice variants. The klatt family is the most "1980s robot"
 # sounding; m*/f* shift the register; croak/whisper add vocal texture.
 ESPEAK_VARIANTS = {
@@ -35,16 +36,22 @@ ESPEAK_VARIANTS = {
 }
 ESPEAK_WPM_BASE = 175
 ESPEAK_PITCH_BASE = 50
+# RHVoice: statistical parametric synthesis — the classic intelligible
+# "screen reader robot" voice. `variant` selects one of its Russian voices.
+RHVOICE_VOICE_DIR = Path("/usr/share/RHVoice/voices")
+RHVOICE_DEFAULT_VOICE = "aleksandr"
 
 _model = None
 _model_lock = threading.Lock()
 _loaded_at = 0.0
 _espeak_ready = False
+_rhvoice_ready = False
+_rhvoice_voices: set[str] = set()
 
 
 class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=1_000)
-    engine: Literal["silero", "espeak"] = "silero"
+    engine: Literal["silero", "espeak", "rhvoice"] = "silero"
     speaker: str = "aidar"
     profile: Literal["natural", "vocoder_source", "vector", "vector_bright"] = (
         "natural"
@@ -76,6 +83,25 @@ def _detect_espeak() -> bool:
     else:
         LOG.warning("espeak-ng binary not found; espeak engine disabled")
     return _espeak_ready
+
+
+def _detect_rhvoice() -> bool:
+    global _rhvoice_ready, _rhvoice_voices
+    _rhvoice_voices = set()
+    if RHVOICE_VOICE_DIR.is_dir():
+        _rhvoice_voices = {
+            entry.name.lower()
+            for entry in RHVOICE_VOICE_DIR.iterdir()
+            if entry.is_dir()
+        }
+    _rhvoice_ready = shutil.which("RHVoice-test") is not None and bool(
+        _rhvoice_voices
+    )
+    if _rhvoice_ready:
+        LOG.info("RHVoice engine available, voices: %s", sorted(_rhvoice_voices))
+    else:
+        LOG.warning("RHVoice-test binary or voices not found; rhvoice engine disabled")
+    return _rhvoice_ready
 
 
 def _tensor_to_wav(audio: torch.Tensor) -> bytes:
@@ -182,6 +208,50 @@ def _synth_espeak(text: str, variant: str, speed: float, pitch: float) -> bytes:
     return result.stdout
 
 
+def _synth_rhvoice(text: str, voice: str, speed: float, pitch: float) -> bytes:
+    """Statistical parametric synthesis via RHVoice.
+
+    The voice is clearly synthetic yet stays smooth and intelligible — the
+    classic Russian "screen reader robot" sound. `speed` and `pitch` are
+    multipliers mapped onto RHVoice's native percentage scales.
+    """
+    rate = max(50, min(400, round(100 * speed)))
+    rh_pitch = max(50, min(200, round(100 * pitch)))
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        out_path = tmp.name
+    try:
+        command = (
+            "RHVoice-test",
+            "-p",
+            voice,
+            "-R",
+            str(SAMPLE_RATE),
+            "-r",
+            str(rate),
+            "-t",
+            str(rh_pitch),
+            "-o",
+            out_path,
+            text,
+        )
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"RHVoice failed ({result.returncode}): {detail}")
+        wav = Path(out_path).read_bytes()
+        if not wav.startswith(b"RIFF"):
+            raise RuntimeError("RHVoice produced no WAV output")
+        return wav
+    finally:
+        Path(out_path).unlink(missing_ok=True)
+
+
 def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> bytes:
     command = (
         "ffmpeg",
@@ -219,10 +289,11 @@ def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> byte
 async def lifespan(_: FastAPI):
     _load_model()
     _detect_espeak()
+    _detect_rhvoice()
     yield
 
 
-app = FastAPI(title="Vector Silero TTS", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Vector Silero TTS", version="0.4.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -235,6 +306,7 @@ def health() -> dict[str, object]:
         "engines": {
             "silero": _model is not None,
             "espeak": _espeak_ready,
+            "rhvoice": _rhvoice_ready,
         },
     }
 
@@ -246,6 +318,8 @@ def voices() -> dict[str, object]:
         "speakers": sorted(SPEAKERS),
         "profiles": sorted(PROFILES),
         "espeak_variants": sorted(ESPEAK_VARIANTS),
+        "rhvoice_voices": sorted(_rhvoice_voices),
+        "rhvoice_default_voice": RHVOICE_DEFAULT_VOICE,
     }
 
 
@@ -267,6 +341,23 @@ def tts(request: TTSRequest) -> Response:
             # not the Silero-specific timbre profiles.
             raw = _synth_espeak(
                 request.text.strip(), request.variant, request.speed, request.pitch
+            )
+            wav = _apply_profile(raw, "natural", 1.0, 1.0)
+        elif request.engine == "rhvoice":
+            if not _rhvoice_ready:
+                raise HTTPException(
+                    status_code=503, detail="RHVoice engine is not available"
+                )
+            voice = request.variant.strip().lower() or RHVOICE_DEFAULT_VOICE
+            if voice not in _rhvoice_voices:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"unknown RHVoice voice {voice!r}; "
+                    f"available: {sorted(_rhvoice_voices)}",
+                )
+            # RHVoice is already synthetic; apply only loudness normalisation.
+            raw = _synth_rhvoice(
+                request.text.strip(), voice, request.speed, request.pitch
             )
             wav = _apply_profile(raw, "natural", 1.0, 1.0)
         else:
