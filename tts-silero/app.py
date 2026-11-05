@@ -232,10 +232,10 @@ def _synth_rhvoice(text: str, voice: str, speed: float, pitch: float) -> bytes:
             str(rh_pitch),
             "-o",
             out_path,
-            text,
         )
         result = subprocess.run(
             command,
+            input=text.encode("utf-8"),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             check=False,
@@ -293,7 +293,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Vector Silero TTS", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Vector Silero TTS", version="0.4.1", lifespan=lifespan)
 
 
 @app.get("/health")
