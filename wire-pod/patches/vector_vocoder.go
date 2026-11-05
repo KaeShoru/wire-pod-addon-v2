@@ -124,7 +124,7 @@ type vocoderBand struct {
 // unvoiced or silent frames, where the carrier should fall back to noise.
 func trackPitch(samples []int16, rate int) []float64 {
 	frame := rate * 30 / 1000
-	hop := frame / 2
+	hop := frame // no overlap: frequency jumps every 30 ms, like the original
 	minLag := rate / 400
 	maxLag := rate / 70
 	if len(samples) < frame || maxLag >= frame {
@@ -224,7 +224,7 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	release := attack
 	wet := make([]float64, len(input))
 	contour := trackPitch(input, vectorAudioRate)
-	hop := vectorAudioRate * 15 / 1000
+	hop := vectorAudioRate * 30 / 1000
 	phase := 0.0
 	noiseState := uint32(0x56454354) // "VECT", fixed for repeatable output.
 	for i, raw := range input {
@@ -249,12 +249,10 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 		noise := float64(int32(noiseState)) / 2147483647.0
 		var carrier float64
 		if voiced {
-			saw := 2*phase - 1
-			pulse := -1.0
-			if phase < 0.43 {
-				pulse = 1
-			}
-			carrier = 0.68*saw + 0.17*pulse + 0.15*noise
+			// Vector's robotic layer sounds like one coarse sine stepping
+			// with the 30 ms pitch updates, not a smooth harmonic-rich saw.
+			sine := math.Sin(2 * math.Pi * phase)
+			carrier = 0.85*sine + 0.15*noise
 		} else {
 			// Fricatives and pauses: no fundamental, hiss through the bands.
 			carrier = noise
