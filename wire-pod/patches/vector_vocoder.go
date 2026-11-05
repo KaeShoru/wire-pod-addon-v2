@@ -247,6 +247,8 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	comb := make([]float64, combDelay)
 	phase := 0.0
 	subPhase := 0.0
+	sawPhase := 0.0
+	speechEnv := 0.0
 	noiseState := uint32(0x56454354) // "VECT", fixed for repeatable output.
 	for i, raw := range input {
 		speech := float64(raw) / 32768
@@ -268,12 +270,32 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 		phase -= math.Floor(phase)
 		subPhase += freq * 0.5 / vectorAudioRate
 		subPhase -= math.Floor(subPhase)
+		sawPhase += freq / vectorAudioRate
+		sawPhase -= math.Floor(sawPhase)
+		// Loudness envelope for the focused drone: follows how much the
+		// robot is "saying" right now, independent of the formant bands.
+		absSpeech := math.Abs(speech)
+		if absSpeech > speechEnv {
+			speechEnv = attack*speechEnv + (1-attack)*absSpeech
+		} else {
+			speechEnv = release*speechEnv + (1-release)*absSpeech
+		}
 		noiseState = 1664525*noiseState + 1013904223
 		noise := float64(int32(noiseState)) / 2147483647.0
+		var drone float64
+		if voiced {
+			// The dominant component: a focused, highly tonal drone — coarse
+			// sine + saw buzz + quiet sub-octave, scaled by the loudness
+			// envelope. This is what makes Vector sound like Vector.
+			sine := math.Sin(2 * math.Pi * phase)
+			sub := math.Sin(2 * math.Pi * subPhase)
+			saw := 2*sawPhase - 1
+			drone = speechEnv * (0.50*sine + 0.25*saw + 0.15*sub + 0.10*noise)
+		} else {
+			drone = speechEnv * 0.25 * noise
+		}
 		var carrier float64
 		if voiced {
-			// Vector's robotic layer sounds like one coarse sine stepping
-			// with the 30 ms pitch updates; the quiet sub-octave adds body.
 			sine := math.Sin(2 * math.Pi * phase)
 			sub := math.Sin(2 * math.Pi * subPhase)
 			carrier = 0.68*sine + 0.17*sub + 0.15*noise
@@ -291,9 +313,12 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 			bands[b].envelope = coefficient*bands[b].envelope + (1-coefficient)*mod
 			sum += bands[b].carrier.process(carrier) * bands[b].envelope
 		}
+		// The drone dominates; the formant-shaped band layer adds speech
+		// articulation on top of it.
+		mixed := 0.65*drone + 0.35*sum
 		combIndex := i % combDelay
-		wet[i] = sum + 0.45*comb[combIndex]
-		comb[combIndex] = sum + 0.45*comb[combIndex]
+		wet[i] = mixed + 0.45*comb[combIndex]
+		comb[combIndex] = mixed + 0.45*comb[combIndex]
 	}
 
 	// Match wet RMS to the source before applying the wet/dry control. This

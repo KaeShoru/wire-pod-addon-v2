@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.8.0
+
+- Vocoder wet layer rebuilt around a focused tonal drone (coarse sine + saw
+  + sub-octave, driven by a loudness envelope) instead of spreading the
+  carrier across the 20 formant bands. Measurements against a recording of
+  the original Vector showed its output is ~7x more tonal than ours was;
+  the band vocoder now only adds articulation on top of the drone.
+
 ## 2.7.0
 
 - Vocoder: added a quiet sub-octave sine to the carrier for body, and a
