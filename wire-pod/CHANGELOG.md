@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.0
+
+- Vocoder carrier changed from a harmonic-rich saw/pulse blend to a mostly
+  pure sine with a touch of noise, matching Vector's "coarse sinusoid"
+  character.
+- Pitch updates now step every 30 ms without interpolation, like the
+  original Dehumaniser segmentation, instead of smooth 15 ms glides.
+
 ## 2.5.0
 
 - Reworked the experimental vocoder to follow the source speech melody: a
