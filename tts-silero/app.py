@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -251,12 +252,29 @@ def _synth_rhvoice(text: str, voice: str, speed: float) -> bytes:
         Path(out_path).unlink(missing_ok=True)
 
 
-def _filter_rhvoice(pitch: float) -> str:
+def _pcm_gain_to_target(wav: bytes, target_dbfs: float = -13.0) -> float:
+    """Gain that normalises a PCM16 WAV to the target RMS level."""
+    try:
+        with wave.open(io.BytesIO(wav)) as stream:
+            frames = stream.readframes(stream.getnframes())
+    except wave.Error:
+        return 1.0
+    samples = np.frombuffer(frames, dtype=np.int16).astype(np.float64) / 32768.0
+    if samples.size == 0:
+        return 1.0
+    rms = float(np.sqrt(np.mean(samples * samples)))
+    if rms < 1e-6:
+        return 1.0
+    gain = 10.0 ** ((target_dbfs - 20.0 * np.log10(rms)) / 20.0)
+    return float(min(4.0, max(0.5, gain)))
+
+
+def _filter_rhvoice(pitch: float, gain: float) -> str:
     """Post-processing for RHVoice voices.
 
     Pitch is shifted with Rubber Band (formants move with the fundamental,
     giving a smaller robot rather than a straining voice) and the level is
-    boosted ahead of the limiter, because RHVoice renders quietly.
+    normalised ahead of the limiter, because RHVoice renders quietly.
     """
     chain = []
     if abs(pitch - 1.0) > 1e-3:
@@ -265,7 +283,9 @@ def _filter_rhvoice(pitch: float) -> str:
             f"pitch={pitch:.7f}:tempo=1.0:"
             "formant=shifted:transients=smooth:detector=soft"
         )
-    chain.extend(("highpass=f=120", "lowpass=f=7800", "volume=1.6", "alimiter=limit=0.90"))
+    chain.extend(
+        ("highpass=f=120", "lowpass=f=7800", f"volume={gain:.3f}", "alimiter=limit=0.90")
+    )
     return ",".join(chain)
 
 
@@ -314,7 +334,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Vector Silero TTS", version="0.4.2", lifespan=lifespan)
+app = FastAPI(title="Vector Silero TTS", version="0.4.3", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -379,7 +399,9 @@ def tts(request: TTSRequest) -> Response:
             # RHVoice pitch is shifted afterwards with Rubber Band; the native
             # -t option strains the HTS voice instead of raising it cleanly.
             raw = _synth_rhvoice(request.text.strip(), voice, request.speed)
-            wav = _run_filter(raw, _filter_rhvoice(request.pitch))
+            wav = _run_filter(
+                raw, _filter_rhvoice(request.pitch, _pcm_gain_to_target(raw))
+            )
         else:
             if _model is None:
                 raise HTTPException(status_code=503, detail="model is not ready")
