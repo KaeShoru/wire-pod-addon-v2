@@ -118,9 +118,72 @@ type vocoderBand struct {
 	envelope  float64
 }
 
+// trackPitch estimates the fundamental frequency of 16 kHz speech every
+// 30 ms (15 ms hop) using normalised autocorrelation, the same approach the
+// Krotos Dehumaniser documents. It returns one value per hop; 0 marks
+// unvoiced or silent frames, where the carrier should fall back to noise.
+func trackPitch(samples []int16, rate int) []float64 {
+	frame := rate * 30 / 1000
+	hop := frame / 2
+	minLag := rate / 400
+	maxLag := rate / 70
+	if len(samples) < frame || maxLag >= frame {
+		return nil
+	}
+	var contour []float64
+	for start := 0; start+frame <= len(samples); start += hop {
+		var energy float64
+		for i := 0; i < frame; i++ {
+			v := float64(samples[start+i])
+			energy += v * v
+		}
+		if math.Sqrt(energy/float64(frame)) < 500 { // silence
+			contour = append(contour, 0)
+			continue
+		}
+		bestLag, bestValue := 0, 0.35 // voicing threshold
+		for lag := minLag; lag <= maxLag; lag++ {
+			var sum, shifted float64
+			for i := 0; i+lag < frame; i++ {
+				a := float64(samples[start+i])
+				b := float64(samples[start+i+lag])
+				sum += a * b
+				shifted += b * b
+			}
+			value := sum / math.Sqrt(energy*shifted+1e-9)
+			if value > bestValue {
+				bestValue, bestLag = value, lag
+			}
+		}
+		if bestLag > 0 {
+			contour = append(contour, float64(rate)/float64(bestLag))
+		} else {
+			contour = append(contour, 0)
+		}
+	}
+	// Median-of-3 smoothing kills single-frame pitch jumps without lagging
+	// behind the melody.
+	for i := 1; i < len(contour)-1; i++ {
+		a, b, c := contour[i-1], contour[i], contour[i+1]
+		if a > b {
+			a, b = b, a
+		}
+		if b > c {
+			b, c = c, b
+		}
+		if a > b {
+			a, b = b, a
+		}
+		contour[i] = b
+	}
+	return contour
+}
+
 // vectorVocodePCM approximates Vector's Krotos_Vocoder_12 soundbank preset:
-// a 180 Hz harmonic carrier, fast 5 ms envelopes, a small dry component and
-// a -2 dB peak ceiling. It is deliberately deterministic and cheap enough for
+// a harmonic carrier that follows the tracked speech pitch (the Dehumaniser
+// tracks pitch every 30 ms and reshapes the spectrum), fast 5 ms envelopes,
+// a small dry component and a -2 dB peak ceiling. carrierHz is only the
+// fallback for fully unvoiced input. Deterministic and cheap enough for
 // weak Home Assistant hosts.
 func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	if len(input) == 0 {
@@ -160,20 +223,42 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	attack := math.Exp(-1 / (0.005 * vectorAudioRate))
 	release := attack
 	wet := make([]float64, len(input))
+	contour := trackPitch(input, vectorAudioRate)
+	hop := vectorAudioRate * 15 / 1000
 	phase := 0.0
 	noiseState := uint32(0x56454354) // "VECT", fixed for repeatable output.
 	for i, raw := range input {
 		speech := float64(raw) / 32768
-		phase += carrierHz / vectorAudioRate
-		phase -= math.Floor(phase)
-		saw := 2*phase - 1
-		pulse := -1.0
-		if phase < 0.43 {
-			pulse = 1
+		// The carrier follows the tracked voice pitch so the robotic layer
+		// keeps the original melody instead of flattening it into a drone.
+		freq := carrierHz
+		voiced := false
+		if len(contour) > 0 {
+			frame := i / hop
+			if frame >= len(contour) {
+				frame = len(contour) - 1
+			}
+			if contour[frame] > 0 {
+				freq = math.Max(70, math.Min(400, contour[frame]))
+				voiced = true
+			}
 		}
+		phase += freq / vectorAudioRate
+		phase -= math.Floor(phase)
 		noiseState = 1664525*noiseState + 1013904223
 		noise := float64(int32(noiseState)) / 2147483647.0
-		carrier := 0.68*saw + 0.17*pulse + 0.15*noise
+		var carrier float64
+		if voiced {
+			saw := 2*phase - 1
+			pulse := -1.0
+			if phase < 0.43 {
+				pulse = 1
+			}
+			carrier = 0.68*saw + 0.17*pulse + 0.15*noise
+		} else {
+			// Fricatives and pauses: no fundamental, hiss through the bands.
+			carrier = noise
+		}
 		var sum float64
 		for b := range bands {
 			mod := math.Abs(bands[b].modulator.process(speech * 2.5119)) // original +8 dB pre-gain

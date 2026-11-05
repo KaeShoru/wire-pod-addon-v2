@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.0
+
+- Reworked the experimental vocoder to follow the source speech melody: a
+  30 ms autocorrelation pitch tracker (the approach documented for Vector's
+  Krotos Dehumaniser) drives the harmonic carrier, instead of a fixed-tone
+  carrier that flattened all intonation into a drone. Unvoiced sounds
+  (fricatives, pauses) now use a noise carrier.
+- `vocoder_carrier_hz` is now only the fallback frequency for fully unvoiced
+  input.
+
 ## 2.4.1
 
 - Added the RHVoice engine choice (`tts_engine: rhvoice`): statistical
