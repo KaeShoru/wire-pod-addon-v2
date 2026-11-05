@@ -208,15 +208,16 @@ def _synth_espeak(text: str, variant: str, speed: float, pitch: float) -> bytes:
     return result.stdout
 
 
-def _synth_rhvoice(text: str, voice: str, speed: float, pitch: float) -> bytes:
+def _synth_rhvoice(text: str, voice: str, speed: float) -> bytes:
     """Statistical parametric synthesis via RHVoice.
 
     The voice is clearly synthetic yet stays smooth and intelligible — the
-    classic Russian "screen reader robot" sound. `speed` and `pitch` are
-    multipliers mapped onto RHVoice's native percentage scales.
+    classic Russian "screen reader robot" sound. Only `speed` is mapped to
+    RHVoice's native rate; pitch shifting happens afterwards in ffmpeg,
+    because the native -t option makes the HTS voice strain for high notes
+    instead of cleanly shifting the whole voice.
     """
     rate = max(50, min(400, round(100 * speed)))
-    rh_pitch = max(50, min(200, round(100 * pitch)))
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         out_path = tmp.name
     try:
@@ -228,8 +229,6 @@ def _synth_rhvoice(text: str, voice: str, speed: float, pitch: float) -> bytes:
             str(SAMPLE_RATE),
             "-r",
             str(rate),
-            "-t",
-            str(rh_pitch),
             "-o",
             out_path,
         )
@@ -252,7 +251,25 @@ def _synth_rhvoice(text: str, voice: str, speed: float, pitch: float) -> bytes:
         Path(out_path).unlink(missing_ok=True)
 
 
-def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> bytes:
+def _filter_rhvoice(pitch: float) -> str:
+    """Post-processing for RHVoice voices.
+
+    Pitch is shifted with Rubber Band (formants move with the fundamental,
+    giving a smaller robot rather than a straining voice) and the level is
+    boosted ahead of the limiter, because RHVoice renders quietly.
+    """
+    chain = []
+    if abs(pitch - 1.0) > 1e-3:
+        chain.append(
+            "rubberband="
+            f"pitch={pitch:.7f}:tempo=1.0:"
+            "formant=shifted:transients=smooth:detector=soft"
+        )
+    chain.extend(("highpass=f=120", "lowpass=f=7800", "volume=1.6", "alimiter=limit=0.90"))
+    return ",".join(chain)
+
+
+def _run_filter(wav: bytes, filter_chain: str) -> bytes:
     command = (
         "ffmpeg",
         "-hide_banner",
@@ -261,7 +278,7 @@ def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> byte
         "-i",
         "pipe:0",
         "-af",
-        _filter_for(profile, speed, pitch),
+        filter_chain,
         "-ac",
         "1",
         "-ar",
@@ -285,6 +302,10 @@ def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> byte
     return result.stdout
 
 
+def _apply_profile(wav: bytes, profile: str, speed: float, pitch: float) -> bytes:
+    return _run_filter(wav, _filter_for(profile, speed, pitch))
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _load_model()
@@ -293,7 +314,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Vector Silero TTS", version="0.4.1", lifespan=lifespan)
+app = FastAPI(title="Vector Silero TTS", version="0.4.2", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -355,11 +376,10 @@ def tts(request: TTSRequest) -> Response:
                     detail=f"unknown RHVoice voice {voice!r}; "
                     f"available: {sorted(_rhvoice_voices)}",
                 )
-            # RHVoice is already synthetic; apply only loudness normalisation.
-            raw = _synth_rhvoice(
-                request.text.strip(), voice, request.speed, request.pitch
-            )
-            wav = _apply_profile(raw, "natural", 1.0, 1.0)
+            # RHVoice pitch is shifted afterwards with Rubber Band; the native
+            # -t option strains the HTS voice instead of raising it cleanly.
+            raw = _synth_rhvoice(request.text.strip(), voice, request.speed)
+            wav = _run_filter(raw, _filter_rhvoice(request.pitch))
         else:
             if _model is None:
                 raise HTTPException(status_code=503, detail="model is not ready")
