@@ -156,6 +156,22 @@ func trackPitch(samples []int16, rate int) []float64 {
 			}
 		}
 		if bestLag > 0 {
+			// Sub-octave guard: pick the smallest lag that is nearly as
+			// strong as the best one, so a deep carrier harmonic cannot
+			// drag the estimate an octave down.
+			for lag := minLag; lag < bestLag; lag++ {
+				var sum, shifted float64
+				for i := 0; i+lag < frame; i++ {
+					a := float64(samples[start+i])
+					b := float64(samples[start+i+lag])
+					sum += a * b
+					shifted += b * b
+				}
+				if sum/math.Sqrt(energy*shifted+1e-9) >= 0.8*bestValue {
+					bestLag = lag
+					break
+				}
+			}
 			contour = append(contour, float64(rate)/float64(bestLag))
 		} else {
 			contour = append(contour, 0)
@@ -225,7 +241,12 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	wet := make([]float64, len(input))
 	contour := trackPitch(input, vectorAudioRate)
 	hop := vectorAudioRate * 30 / 1000
+	// Short feedback comb on the synthetic layer: the fixed metallic ring of
+	// Vector's small speaker enclosure, independent of the voice pitch.
+	const combDelay = vectorAudioRate / 320 // ~3.1 ms
+	comb := make([]float64, combDelay)
 	phase := 0.0
+	subPhase := 0.0
 	noiseState := uint32(0x56454354) // "VECT", fixed for repeatable output.
 	for i, raw := range input {
 		speech := float64(raw) / 32768
@@ -245,14 +266,17 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 		}
 		phase += freq / vectorAudioRate
 		phase -= math.Floor(phase)
+		subPhase += freq * 0.5 / vectorAudioRate
+		subPhase -= math.Floor(subPhase)
 		noiseState = 1664525*noiseState + 1013904223
 		noise := float64(int32(noiseState)) / 2147483647.0
 		var carrier float64
 		if voiced {
 			// Vector's robotic layer sounds like one coarse sine stepping
-			// with the 30 ms pitch updates, not a smooth harmonic-rich saw.
+			// with the 30 ms pitch updates; the quiet sub-octave adds body.
 			sine := math.Sin(2 * math.Pi * phase)
-			carrier = 0.85*sine + 0.15*noise
+			sub := math.Sin(2 * math.Pi * subPhase)
+			carrier = 0.68*sine + 0.17*sub + 0.15*noise
 		} else {
 			// Fricatives and pauses: no fundamental, hiss through the bands.
 			carrier = noise
@@ -267,7 +291,9 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 			bands[b].envelope = coefficient*bands[b].envelope + (1-coefficient)*mod
 			sum += bands[b].carrier.process(carrier) * bands[b].envelope
 		}
-		wet[i] = sum
+		combIndex := i % combDelay
+		wet[i] = sum + 0.45*comb[combIndex]
+		comb[combIndex] = sum + 0.45*comb[combIndex]
 	}
 
 	// Match wet RMS to the source before applying the wet/dry control. This

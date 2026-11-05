@@ -50,7 +50,7 @@ jobs:
           platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            ${{ env.IMAGE }}:tts-silero-0.4.2
+            ${{ env.IMAGE }}:tts-silero-0.4.3
             ${{ env.IMAGE }}:tts-silero-latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}

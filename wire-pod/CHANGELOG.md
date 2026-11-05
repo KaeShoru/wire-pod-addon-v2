@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.0
+
+- Vocoder: added a quiet sub-octave sine to the carrier for body, and a
+  short feedback comb on the synthetic layer for Vector's metallic
+  small-speaker ring.
+- Pitch tracker: sub-octave guard picks the smallest nearly-best lag, so a
+  deep carrier harmonic cannot drag the estimate an octave down.
+
 ## 2.6.0
 
 - Vocoder carrier changed from a harmonic-rich saw/pulse blend to a mostly
