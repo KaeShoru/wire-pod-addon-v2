@@ -3,6 +3,7 @@ package wirepod_ttr
 import (
 	"encoding/binary"
 	"math"
+	"sort"
 	"testing"
 )
 
@@ -101,5 +102,62 @@ func TestVectorVocoderZeroMixPreservesSignal(t *testing.T) {
 		if got[i] != input[i] {
 			t.Fatalf("sample %d changed from %d to %d", i, input[i], got[i])
 		}
+	}
+}
+
+func medianPitch(samples []int16) (float64, int) {
+	var voiced []float64
+	for _, f := range trackPitch(samples, vectorAudioRate) {
+		if f > 0 {
+			voiced = append(voiced, f)
+		}
+	}
+	if len(voiced) == 0 {
+		return 0, 0
+	}
+	sort.Float64s(voiced)
+	return voiced[len(voiced)/2], len(voiced)
+}
+
+func TestTrackPitchFindsFundamental(t *testing.T) {
+	input := make([]int16, vectorAudioRate)
+	for i := range input {
+		seconds := float64(i) / vectorAudioRate
+		v := 0.0
+		for h := 1; h <= 6; h++ {
+			v += math.Sin(2*math.Pi*220*float64(h)*seconds) / float64(h)
+		}
+		input[i] = int16(9000 * v)
+	}
+	median, frames := medianPitch(input)
+	if frames == 0 {
+		t.Fatal("no voiced frames detected")
+	}
+	if math.Abs(median-220) > 12 {
+		t.Fatalf("tracked pitch %.1f Hz, want ~220", median)
+	}
+}
+
+func TestVectorVocoderFollowsSourcePitch(t *testing.T) {
+	// Voiced-like signal: harmonics of 220 Hz under a slow envelope.
+	input := make([]int16, vectorAudioRate)
+	for i := range input {
+		seconds := float64(i) / vectorAudioRate
+		envelope := 0.4 + 0.6*math.Sin(math.Pi*seconds)
+		v := 0.0
+		for h := 1; h <= 6; h++ {
+			v += math.Sin(2*math.Pi*220*float64(h)*seconds) / float64(h)
+		}
+		input[i] = int16(9000 * envelope * v)
+	}
+	// The fallback carrier is 180 Hz; the output must instead follow the
+	// 220 Hz source, like Vector's Dehumaniser does.
+	got := vectorVocodePCM(input, 180, 1.0)
+	median, frames := medianPitch(got)
+	if frames == 0 {
+		t.Fatal("no voiced frames in vocoded output")
+	}
+	if math.Abs(median-220) > 15 {
+		t.Fatalf("vocoded pitch %.1f Hz, want ~220 (not the 180 Hz fallback)", median)
 	}
 }
