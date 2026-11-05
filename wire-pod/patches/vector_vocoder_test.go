@@ -151,13 +151,23 @@ func TestVectorVocoderFollowsSourcePitch(t *testing.T) {
 		input[i] = int16(9000 * envelope * v)
 	}
 	// The fallback carrier is 180 Hz; the output must instead follow the
-	// 220 Hz source, like Vector's Dehumaniser does.
+	// 220 Hz source, like Vector's Dehumaniser does. Measure spectrally:
+	// the comb resonance would confuse an autocorrelation readout.
 	got := vectorVocodePCM(input, 180, 1.0)
-	median, frames := medianPitch(got)
-	if frames == 0 {
-		t.Fatal("no voiced frames in vocoded output")
+	peakFreq, peakPower := 0.0, 0.0
+	for freq := 60.0; freq <= 400; freq += 2 {
+		var re, im float64
+		for i, sample := range got {
+			angle := 2 * math.Pi * freq * float64(i) / vectorAudioRate
+			re += float64(sample) * math.Cos(angle)
+			im -= float64(sample) * math.Sin(angle)
+		}
+		power := re*re + im*im
+		if power > peakPower {
+			peakPower, peakFreq = power, freq
+		}
 	}
-	if math.Abs(median-220) > 15 {
-		t.Fatalf("vocoded pitch %.1f Hz, want ~220 (not the 180 Hz fallback)", median)
+	if math.Abs(peakFreq-220) > 12 {
+		t.Fatalf("vocoded spectral peak %.1f Hz, want ~220 (not the 180 Hz fallback)", peakFreq)
 	}
 }
