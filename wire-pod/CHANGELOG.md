@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.9.0
+
+- Vocoder replaced with a faithful replica of Vector's actual voice chain,
+  reverse engineered from firmware 1.6.0.3331 (Krotos Vocoder, Victor_VO.bnk
+  shareset): the exact 4096-sample clipped-sinc carrier wavetable extracted
+  from libaudio_engine.so, STFT processing (1024/512, sqrt-Hann), per-bin
+  spectral envelope, the firmware's 8-band log-spaced carrier EQ
+  [0,0,0,0,0.5,1,0.5,1] that removes everything below ~530 Hz, and a
+  512-sample carrier glide.
+- Carrier follows the tracked speech pitch clamped to the firmware's
+  [100, 200] Hz range; `vocoder_carrier_hz` now scales the tracked pitch
+  (180 = unchanged).
+- Mild spectral valley expansion and a soft silence gate keep breathy local
+  TTS voices from turning into hash; tunable via `VECTOR_TTS_VOCODER_GAMMA`,
+  `VECTOR_TTS_VOCODER_GATE`, `VECTOR_TTS_VOCODER_LPF`.
+- Wet/dry balance is RMS-calibrated per utterance: `vocoder_mix` 0.18 keeps
+  speech forward, 0.7 is Vector-forward, 1.0 is almost fully vocoded.
+
 ## 2.8.0
 
 - Vocoder wet layer rebuilt around a focused tonal drone (coarse sine + saw

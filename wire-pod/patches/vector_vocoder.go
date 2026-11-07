@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 )
 
 const vectorAudioRate = 16000
@@ -86,50 +87,172 @@ func resamplePCM16(input []int16, from, to int) []int16 {
 	return out
 }
 
-type biquad struct {
-	b0, b1, b2 float64
-	a1, a2     float64
-	x1, x2     float64
-	y1, y2     float64
+func pcm16Bytes(samples []int16) []byte {
+	out := make([]byte, len(samples)*2)
+	for i, sample := range samples {
+		binary.LittleEndian.PutUint16(out[i*2:], uint16(sample))
+	}
+	return out
 }
 
-func bandpass(sampleRate int, frequency, q float64) biquad {
-	omega := 2 * math.Pi * frequency / float64(sampleRate)
-	alpha := math.Sin(omega) / (2 * q)
-	a0 := 1 + alpha
-	return biquad{
-		b0: alpha / a0,
-		b2: -alpha / a0,
-		a1: -2 * math.Cos(omega) / a0,
-		a2: (1 - alpha) / a0,
+// ---------------------------------------------------------------------------
+// Vector voice replica: Krotos Vocoder as configured in Vector firmware
+// 1.6.0.3331 (Victor_VO.bnk, shareset 2051987598), reverse engineered from
+// libaudio_engine.so.
+//
+//   - 16 kHz, FFT frame 1024, hop 512, sqrt-Hann analysis+synthesis (COLA)
+//   - carrier: the exact 4096-entry clipped-sinc wavetable (carrier waveform
+//     enum 14), frequency = tracked modulator pitch clamped to [100, 200] Hz
+//     with a 512-sample glide on every change
+//   - modulator spectral envelope: per-bin |FFT| magnitude (the original's
+//     5 ms followers are instant at the 31.25 Hz frame rate)
+//   - carrier graphic EQ: 8 log-spaced bands over 1024 bins, gains
+//     [0, 0, 0, 0, 0.5, 1, 0.5, 1], edges bin(b) = exp(b*ln(512)/7)-1
+//   - mix: dominant wet layer over a quiet dry underlay
+//
+// On top of the firmware behaviour the replica adds a mild spectral valley
+// expansion and a soft silence gate, because the local Russian TTS voices are
+// breathier than the original Acapela modulator; without them the carrier
+// harmonics amplify the TTS noise floor into audible hash.
+// ---------------------------------------------------------------------------
+
+const (
+	vocoderFrame    = 1024
+	vocoderHop      = 512
+	vocoderGlide    = 512
+	vocoderPitchMin = 100.0
+	vocoderPitchMax = 200.0
+)
+
+var vocoderEQBandGains = [8]float64{0, 0, 0, 0, 0.5, 1, 0.5, 1}
+
+// vocoderEQBandConst is the measured constant behind the band edge formula
+// (approximates ln(512)).
+const vocoderEQBandConst = 6.234410762786865
+
+// fftTables holds precomputed bit-reversal indices and twiddle factors for
+// the 1024-point transforms.
+var fftTables = struct {
+	sync.Once
+	rev     [vocoderFrame]int
+	twiddle [vocoderFrame / 2]complex128
+}{}
+
+func initFFT() {
+	fftTables.Do(func() {
+		bits := 10 // log2(1024)
+		for i := 0; i < vocoderFrame; i++ {
+			r := 0
+			for b := 0; b < bits; b++ {
+				r |= (i >> b & 1) << (bits - 1 - b)
+			}
+			fftTables.rev[i] = r
+		}
+		for k := 0; k < vocoderFrame/2; k++ {
+			angle := -2 * math.Pi * float64(k) / vocoderFrame
+			fftTables.twiddle[k] = complex(math.Cos(angle), math.Sin(angle))
+		}
+	})
+}
+
+// fft1024 performs an in-place iterative radix-2 FFT. When inverse is true
+// the result is the unnormalised inverse transform; callers scale by 1/N.
+func fft1024(buf []complex128, inverse bool) {
+	initFFT()
+	for i := 0; i < vocoderFrame; i++ {
+		j := fftTables.rev[i]
+		if j > i {
+			buf[i], buf[j] = buf[j], buf[i]
+		}
+	}
+	for size := 2; size <= vocoderFrame; size *= 2 {
+		half := size / 2
+		step := vocoderFrame / size
+		for start := 0; start < vocoderFrame; start += size {
+			for k := 0; k < half; k++ {
+				w := fftTables.twiddle[k*step]
+				if inverse {
+					w = complex(real(w), -imag(w))
+				}
+				even := buf[start+k]
+				odd := buf[start+k+half] * w
+				buf[start+k] = even + odd
+				buf[start+k+half] = even - odd
+			}
+		}
 	}
 }
 
-func (f *biquad) process(x float64) float64 {
-	y := f.b0*x + f.b1*f.x1 + f.b2*f.x2 - f.a1*f.y1 - f.a2*f.y2
-	f.x2, f.x1 = f.x1, x
-	f.y2, f.y1 = f.y1, y
-	return y
+var sqrtHannWindow [vocoderFrame]float64
+var sqrtHannOnce sync.Once
+
+func vocoderWindow() *[vocoderFrame]float64 {
+	sqrtHannOnce.Do(func() {
+		for i := 0; i < vocoderFrame; i++ {
+			// np.hanning(N+2)[1:-1] equivalent, then square root.
+			h := 0.5 - 0.5*math.Cos(2*math.Pi*float64(i+1)/float64(vocoderFrame+1))
+			sqrtHannWindow[i] = math.Sqrt(h)
+		}
+	})
+	return &sqrtHannWindow
 }
 
-type vocoderBand struct {
-	modulator biquad
-	carrier   biquad
-	envelope  float64
+var vocoderEQ [vocoderFrame]float64
+var vocoderEQOnce sync.Once
+
+func carrierEQGains() *[vocoderFrame]float64 {
+	vocoderEQOnce.Do(func() {
+		edges := [9]int{}
+		for b := 0; b <= 8; b++ {
+			edges[b] = int(math.Round(math.Exp(float64(b)*vocoderEQBandConst/7) - 1))
+		}
+		for b := 0; b < 8; b++ {
+			lo := edges[b]
+			if lo < 1 {
+				lo = 1
+			}
+			hi := 512
+			if b < 7 {
+				hi = edges[b+1]
+			}
+			if hi > 512 {
+				hi = 512
+			}
+			for k := lo; k < hi; k++ {
+				vocoderEQ[k] = vocoderEQBandGains[b]
+				mirror := vocoderFrame - 1 - k
+				if mirror >= 0 && mirror < vocoderFrame {
+					vocoderEQ[mirror] = vocoderEQBandGains[b]
+				}
+			}
+		}
+	})
+	return &vocoderEQ
 }
 
-// trackPitch estimates the fundamental frequency of 16 kHz speech every
-// 30 ms (15 ms hop) using normalised autocorrelation, the same approach the
-// Krotos Dehumaniser documents. It returns one value per hop; 0 marks
-// unvoiced or silent frames, where the carrier should fall back to noise.
+// trackPitch estimates the fundamental frequency of 16 kHz speech once per
+// hop using Hann-windowed normalised autocorrelation with parabolic
+// interpolation, then median-3 smoothing. It returns one value per hop; 0
+// marks unvoiced or silent frames.
 func trackPitch(samples []int16, rate int) []float64 {
-	frame := rate * 30 / 1000
-	hop := frame // no overlap: frequency jumps every 30 ms, like the original
+	frame := vocoderFrame
+	hop := vocoderHop
+	if rate != vectorAudioRate {
+		frame = rate / 15 // keep ~64 ms windows on other rates
+		hop = frame / 2
+	}
 	minLag := rate / 400
 	maxLag := rate / 70
 	if len(samples) < frame || maxLag >= frame {
 		return nil
 	}
+	// Hann window lowers the autocorrelation sidelobes that otherwise pick
+	// octave-wrong lags.
+	win := make([]float64, frame)
+	for i := range win {
+		win[i] = 0.5 - 0.5*math.Cos(2*math.Pi*float64(i)/float64(frame-1))
+	}
+	silenceRMS := 0.005 * 32768 // float threshold, in int16 units
 	var contour []float64
 	for start := 0; start+frame <= len(samples); start += hop {
 		var energy float64
@@ -137,48 +260,48 @@ func trackPitch(samples []int16, rate int) []float64 {
 			v := float64(samples[start+i])
 			energy += v * v
 		}
-		if math.Sqrt(energy/float64(frame)) < 500 { // silence
+		if math.Sqrt(energy/float64(frame)) < silenceRMS {
 			contour = append(contour, 0)
 			continue
 		}
-		bestLag, bestValue := 0, 0.35 // voicing threshold
-		for lag := minLag; lag <= maxLag; lag++ {
-			var sum, shifted float64
+		// Raw autocorrelation of the windowed frame, normalized by ac(0) —
+		// same biased estimator the reference Python replica uses.
+		ac0 := 0.0
+		for i := 0; i < frame; i++ {
+			v := float64(samples[start+i]) * win[i]
+			ac0 += v * v
+		}
+		if ac0 <= 0 {
+			contour = append(contour, 0)
+			continue
+		}
+		ac := func(lag int) float64 {
+			var sum float64
 			for i := 0; i+lag < frame; i++ {
-				a := float64(samples[start+i])
-				b := float64(samples[start+i+lag])
-				sum += a * b
-				shifted += b * b
+				sum += float64(samples[start+i]) * win[i] * float64(samples[start+i+lag]) * win[i+lag]
 			}
-			value := sum / math.Sqrt(energy*shifted+1e-9)
-			if value > bestValue {
+			return sum / ac0
+		}
+		bestLag, bestValue := 0, 0.3
+		for lag := minLag; lag <= maxLag; lag++ {
+			if value := ac(lag); value > bestValue {
 				bestValue, bestLag = value, lag
 			}
 		}
-		if bestLag > 0 {
-			// Sub-octave guard: pick the smallest lag that is nearly as
-			// strong as the best one, so a deep carrier harmonic cannot
-			// drag the estimate an octave down.
-			for lag := minLag; lag < bestLag; lag++ {
-				var sum, shifted float64
-				for i := 0; i+lag < frame; i++ {
-					a := float64(samples[start+i])
-					b := float64(samples[start+i+lag])
-					sum += a * b
-					shifted += b * b
-				}
-				if sum/math.Sqrt(energy*shifted+1e-9) >= 0.8*bestValue {
-					bestLag = lag
-					break
-				}
-			}
-			contour = append(contour, float64(rate)/float64(bestLag))
-		} else {
+		if bestLag == 0 {
 			contour = append(contour, 0)
+			continue
 		}
+		// Parabolic interpolation around the autocorrelation peak.
+		refined := float64(bestLag)
+		if bestLag > minLag && bestLag < maxLag {
+			a, b, c := ac(bestLag-1), ac(bestLag), ac(bestLag+1)
+			if denom := a - 2*b + c; math.Abs(denom) > 1e-12 {
+				refined = float64(bestLag) + 0.5*(a-c)/denom
+			}
+		}
+		contour = append(contour, float64(rate)/refined)
 	}
-	// Median-of-3 smoothing kills single-frame pitch jumps without lagging
-	// behind the melody.
 	for i := 1; i < len(contour)-1; i++ {
 		a, b, c := contour[i-1], contour[i], contour[i+1]
 		if a > b {
@@ -195,171 +318,237 @@ func trackPitch(samples []int16, rate int) []float64 {
 	return contour
 }
 
-// vectorVocodePCM approximates Vector's Krotos_Vocoder_12 soundbank preset:
-// a harmonic carrier that follows the tracked speech pitch (the Dehumaniser
-// tracks pitch every 30 ms and reshapes the spectrum), fast 5 ms envelopes,
-// a small dry component and a -2 dB peak ceiling. carrierHz is only the
-// fallback for fully unvoiced input. Deterministic and cheap enough for
-// weak Home Assistant hosts.
-func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
-	if len(input) == 0 {
-		return nil
+type sincOscillator struct {
+	phase float64
+}
+
+// render produces n carrier samples using the extracted sinc wavetable with
+// linear interpolation; freqs holds one frequency per sample.
+func (o *sincOscillator) render(freqs []float64, out []float64) {
+	const size = float64(len(sincWavetable))
+	for i := range out {
+		o.phase = math.Mod(o.phase+freqs[i]*size/vectorAudioRate, size)
+		idx := int(o.phase)
+		frac := o.phase - float64(idx)
+		next := (idx + 1) % len(sincWavetable)
+		out[i] = float64(sincWavetable[idx])*(1-frac) + float64(sincWavetable[next])*frac
 	}
-	carrierHz = math.Max(100, math.Min(260, carrierHz))
+}
+
+type lowpassBiquad struct {
+	b0, b1, b2 float64
+	a1, a2     float64
+	x1, x2     float64
+	y1, y2     float64
+}
+
+func butterLP(sampleRate int, cutoff float64) lowpassBiquad {
+	w := 2 * math.Pi * cutoff / float64(sampleRate)
+	q := math.Sqrt2 / 2
+	alpha := math.Sin(w) / (2 * q)
+	a0 := 1 + alpha
+	return lowpassBiquad{
+		b0: (1 - math.Cos(w)) / 2 / a0,
+		b1: (1 - math.Cos(w)) / a0,
+		b2: (1 - math.Cos(w)) / 2 / a0,
+		a1: -2 * math.Cos(w) / a0,
+		a2: (1 - alpha) / a0,
+	}
+}
+
+func (f *lowpassBiquad) process(x float64) float64 {
+	y := f.b0*x + f.b1*f.x1 + f.b2*f.x2 - f.a1*f.y1 - f.a2*f.y2
+	f.x2, f.x1 = f.x1, x
+	f.y2, f.y1 = f.y1, y
+	return y
+}
+
+// vectorVocodePCM reproduces Vector's voice: an STFT vocoder whose carrier is
+// Vector's own clipped-sinc wavetable following the speech pitch, shaped by
+// the firmware's 8-band carrier EQ.
+//
+// carrierHz is kept as a pitch anchor: the tracked contour is scaled by
+// carrierHz/180 before the [100, 200] Hz clamp, so lower values deepen the
+// robot and higher values brighten it. wetMix (0..1) maps onto the wet/dry
+// balance, from a dry-forward +(-6 dB) blend to an almost fully vocoded
+// (+24 dB) output; 0 returns the input untouched.
+func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
+	if len(input) <= vocoderFrame {
+		return append([]int16(nil), input...)
+	}
 	wetMix = math.Max(0, math.Min(1, wetMix))
 	if wetMix == 0 {
 		return append([]int16(nil), input...)
 	}
+	pitchScale := math.Max(0.5, math.Min(1.6, carrierHz/180))
+	wetDryDb := wetMix*30 - 6
 
-	const bandCount = 20
-	const low = 140.0
-	const high = 7600.0
-	centers := make([]float64, bandCount)
-	for i := range centers {
-		centers[i] = low * math.Pow(high/low, float64(i)/float64(bandCount-1))
-	}
-	bands := make([]vocoderBand, bandCount)
-	for i, center := range centers {
-		var lower, upper float64
-		if i == 0 {
-			lower = low / math.Sqrt(centers[1]/low)
-		} else {
-			lower = math.Sqrt(centers[i-1] * center)
-		}
-		if i == len(centers)-1 {
-			upper = math.Min(float64(vectorAudioRate)/2-50, high*math.Sqrt(high/centers[i-1]))
-		} else {
-			upper = math.Sqrt(center * centers[i+1])
-		}
-		q := math.Max(0.7, center/(upper-lower))
-		bands[i].modulator = bandpass(vectorAudioRate, center, q)
-		bands[i].carrier = bandpass(vectorAudioRate, center, q)
-	}
+	// Live-tunable knobs, exposed as addon environment variables.
+	gamma := envFloat("VECTOR_TTS_VOCODER_GAMMA", 1.35)
+	gamma = math.Max(1, math.Min(2.5, gamma))
+	gateThreshold := envFloat("VECTOR_TTS_VOCODER_GATE", 0.008)
+	gateThreshold = math.Max(0, math.Min(0.05, gateThreshold))
+	const gateFloor = 0.05
+	lpfHz := envFloat("VECTOR_TTS_VOCODER_LPF", 2200)
+	lpfHz = math.Max(0, math.Min(7000, lpfHz))
 
-	attack := math.Exp(-1 / (0.005 * vectorAudioRate))
-	release := attack
-	wet := make([]float64, len(input))
+	n := len(input)
+	dry := make([]float64, n)
+	for i, s := range input {
+		dry[i] = float64(s) / 32768
+	}
 	contour := trackPitch(input, vectorAudioRate)
-	hop := vectorAudioRate * 30 / 1000
-	// Short feedback comb on the synthetic layer: the fixed metallic ring of
-	// Vector's small speaker enclosure, independent of the voice pitch.
-	const combDelay = vectorAudioRate / 320 // ~3.1 ms
-	comb := make([]float64, combDelay)
-	phase := 0.0
-	subPhase := 0.0
-	sawPhase := 0.0
-	speechEnv := 0.0
-	noiseState := uint32(0x56454354) // "VECT", fixed for repeatable output.
-	for i, raw := range input {
-		speech := float64(raw) / 32768
-		// The carrier follows the tracked voice pitch so the robotic layer
-		// keeps the original melody instead of flattening it into a drone.
-		freq := carrierHz
-		voiced := false
-		if len(contour) > 0 {
-			frame := i / hop
-			if frame >= len(contour) {
-				frame = len(contour) - 1
+	window := vocoderWindow()
+	eq := carrierEQGains()
+
+	nFrames := (n - vocoderFrame) / vocoderHop
+	outLen := nFrames*vocoderHop + vocoderFrame
+	wet := make([]float64, outLen)
+	carrierHist := make([]float64, vocoderFrame)
+	modBuf := make([]complex128, vocoderFrame)
+	carBuf := make([]complex128, vocoderFrame)
+	frameFreqs := make([]float64, vocoderHop)
+	frameCarrier := make([]float64, vocoderHop)
+	var osc sincOscillator
+	current := 180.0
+	target := 180.0
+	step := 0.0
+	glideLeft := 0
+	gateGain := 0.0
+
+	for frame := 0; frame < nFrames; frame++ {
+		// Carrier frequency update: pitch-tracked, clamped, then glided over
+		// one hop, like the firmware's per-RTPC glide.
+		pitch := 0.0
+		if frame < len(contour) {
+			pitch = contour[frame]
+		}
+		if pitch > 0 {
+			newTarget := math.Max(vocoderPitchMin, math.Min(vocoderPitchMax, pitch*pitchScale))
+			if math.Abs(newTarget-target) > 1e-6 {
+				target = newTarget
+				step = (target - current) / vocoderGlide
+				glideLeft = vocoderGlide
 			}
-			if contour[frame] > 0 {
-				freq = math.Max(70, math.Min(400, contour[frame]))
-				voiced = true
+		}
+		for i := 0; i < vocoderHop; i++ {
+			if glideLeft > 0 {
+				current += step
+				glideLeft--
+			} else {
+				current = target
+			}
+			frameFreqs[i] = current
+		}
+		osc.render(frameFreqs, frameCarrier)
+		copy(carrierHist, carrierHist[vocoderHop:])
+		copy(carrierHist[vocoderHop:], frameCarrier)
+
+		// Modulator analysis.
+		offset := frame * vocoderHop
+		var frameEnergy float64
+		for i := 0; i < vocoderFrame; i++ {
+			v := dry[offset+i] * window[i]
+			modBuf[i] = complex(v, 0)
+			frameEnergy += dry[offset+i] * dry[offset+i]
+		}
+		fft1024(modBuf, false)
+		frameRMS := math.Sqrt(frameEnergy / vocoderFrame)
+		// Soft silence gate: fast open, slow close, never fully shut.
+		gateTarget := 1.0
+		if frameRMS < gateThreshold {
+			gateTarget = gateFloor
+		}
+		if frame == 0 {
+			gateGain = gateTarget
+		} else if gateTarget > gateGain {
+			gateGain = gateGain*0.3 + gateTarget*0.7
+		} else {
+			gateGain = gateGain*0.75 + gateTarget*0.25
+		}
+		peakMag := 0.0
+		mags := make([]float64, vocoderFrame)
+		for i := 0; i < vocoderFrame; i++ {
+			mags[i] = math.Min(1e9, math.Hypot(real(modBuf[i]), imag(modBuf[i])))
+			if mags[i] > peakMag {
+				peakMag = mags[i]
 			}
 		}
-		phase += freq / vectorAudioRate
-		phase -= math.Floor(phase)
-		subPhase += freq * 0.5 / vectorAudioRate
-		subPhase -= math.Floor(subPhase)
-		sawPhase += freq / vectorAudioRate
-		sawPhase -= math.Floor(sawPhase)
-		// Loudness envelope for the focused drone: follows how much the
-		// robot is "saying" right now, independent of the formant bands.
-		absSpeech := math.Abs(speech)
-		if absSpeech > speechEnv {
-			speechEnv = attack*speechEnv + (1-attack)*absSpeech
-		} else {
-			speechEnv = release*speechEnv + (1-release)*absSpeech
-		}
-		noiseState = 1664525*noiseState + 1013904223
-		noise := float64(int32(noiseState)) / 2147483647.0
-		var drone float64
-		if voiced {
-			// The dominant component: a focused, highly tonal drone — coarse
-			// sine + saw buzz + quiet sub-octave, scaled by the loudness
-			// envelope. This is what makes Vector sound like Vector.
-			sine := math.Sin(2 * math.Pi * phase)
-			sub := math.Sin(2 * math.Pi * subPhase)
-			saw := 2*sawPhase - 1
-			drone = speechEnv * (0.50*sine + 0.25*saw + 0.15*sub + 0.10*noise)
-		} else {
-			drone = speechEnv * 0.25 * noise
-		}
-		var carrier float64
-		if voiced {
-			sine := math.Sin(2 * math.Pi * phase)
-			sub := math.Sin(2 * math.Pi * subPhase)
-			carrier = 0.68*sine + 0.17*sub + 0.15*noise
-		} else {
-			// Fricatives and pauses: no fundamental, hiss through the bands.
-			carrier = noise
-		}
-		var sum float64
-		for b := range bands {
-			mod := math.Abs(bands[b].modulator.process(speech * 2.5119)) // original +8 dB pre-gain
-			coefficient := release
-			if mod > bands[b].envelope {
-				coefficient = attack
+		if gamma != 1.0 && peakMag > 1e-12 {
+			inv := 1.0 / peakMag
+			for i := range mags {
+				mags[i] = math.Pow(mags[i]*inv, gamma) * peakMag
 			}
-			bands[b].envelope = coefficient*bands[b].envelope + (1-coefficient)*mod
-			sum += bands[b].carrier.process(carrier) * bands[b].envelope
 		}
-		// The drone dominates; the formant-shaped band layer adds speech
-		// articulation on top of it.
-		mixed := 0.65*drone + 0.35*sum
-		combIndex := i % combDelay
-		wet[i] = mixed + 0.45*comb[combIndex]
-		comb[combIndex] = mixed + 0.45*comb[combIndex]
+		if gateThreshold > 0 {
+			for i := range mags {
+				mags[i] *= gateGain
+			}
+		}
+
+		// Carrier spectrum (unwindowed, as in the firmware), shaped by the
+		// modulator envelope and the graphic EQ.
+		for i := 0; i < vocoderFrame; i++ {
+			carBuf[i] = complex(carrierHist[i], 0)
+		}
+		fft1024(carBuf, false)
+		for i := 0; i < vocoderFrame; i++ {
+			carBuf[i] *= complex(mags[i]*eq[i], 0)
+		}
+		fft1024(carBuf, true)
+		scale := 1.0 / vocoderFrame
+		for i := 0; i < vocoderFrame; i++ {
+			wet[offset+i] += real(carBuf[i]) * scale * window[i]
+		}
 	}
 
-	// Match wet RMS to the source before applying the wet/dry control. This
-	// makes the profile stable for quiet and loud TTS engines alike.
-	var dryEnergy, wetEnergy float64
-	for i, sample := range input {
-		dry := float64(sample) / 32768
-		dryEnergy += dry * dry
-		wetEnergy += wet[i] * wet[i]
+	// Calibrate the wet layer so its RMS sits wetDryDb above the dry RMS over
+	// the voiced region; the original achieves the same with fixed dB gains on
+	// its own internal scaling.
+	const dryGain = 0.8913 // firmware dry level: -1 dB
+	var dryRMS, wetRMS float64
+	var count int
+	for i := vocoderFrame / 2; i < outLen && i < n; i++ {
+		if math.Abs(dry[i]) > 0.02 {
+			dryRMS += dry[i] * dry[i]
+			wetRMS += wet[i] * wet[i]
+			count++
+		}
 	}
-	wetGain := 1.0
-	if wetEnergy > 1e-12 {
-		wetGain = math.Sqrt(dryEnergy / wetEnergy)
+	wetGain := 0.0
+	if count > 100 && wetRMS > 1e-12 {
+		wetGain = math.Sqrt(dryRMS/wetRMS) * math.Pow(10, wetDryDb/20) / dryGain
 	}
 
-	combined := make([]float64, len(input))
+	var lp1, lp2 lowpassBiquad
+	if lpfHz > 0 {
+		lp1 = butterLP(vectorAudioRate, lpfHz)
+		lp2 = butterLP(vectorAudioRate, lpfHz)
+	}
+	out := make([]int16, n)
 	peak := 0.0
-	for i, sample := range input {
-		dry := float64(sample) / 32768
-		// Saturate only the synthetic carrier. Applying tanh after the wet/dry
-		// mix compressed the original TTS even at low mix values.
-		processedWet := math.Tanh(wet[i] * wetGain)
-		combined[i] = (1-wetMix)*dry + wetMix*processedWet
-		peak = math.Max(peak, math.Abs(combined[i]))
+	mixed := make([]float64, n)
+	for i := 0; i < n; i++ {
+		v := dryGain * dry[i]
+		if i < outLen {
+			v += wetGain * wet[i]
+		}
+		if lpfHz > 0 {
+			v = lp2.process(lp1.process(v))
+		}
+		mixed[i] = v
+		if math.Abs(v) > peak {
+			peak = math.Abs(v)
+		}
 	}
+	// Safety ceiling only: scale the whole utterance once, no pumping.
 	ceiling := math.Pow(10, -2.0/20.0)
 	gain := 1.0
 	if peak > ceiling {
 		gain = ceiling / peak
 	}
-	out := make([]int16, len(input))
-	for i, value := range combined {
-		out[i] = int16(math.Round(value * gain * 32767))
-	}
-	return out
-}
-
-func pcm16Bytes(samples []int16) []byte {
-	out := make([]byte, len(samples)*2)
-	for i, sample := range samples {
-		binary.LittleEndian.PutUint16(out[i*2:], uint16(sample))
+	for i, v := range mixed {
+		out[i] = int16(math.Round(v * gain * 32767))
 	}
 	return out
 }

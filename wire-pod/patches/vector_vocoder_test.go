@@ -139,23 +139,25 @@ func TestTrackPitchFindsFundamental(t *testing.T) {
 }
 
 func TestVectorVocoderFollowsSourcePitch(t *testing.T) {
-	// Voiced-like signal: harmonics of 220 Hz under a slow envelope.
-	input := make([]int16, vectorAudioRate)
+	// Voiced-like signal: harmonics of 150 Hz under a slow envelope. 150 Hz
+	// sits inside the firmware's [100, 200] Hz carrier clamp.
+	input := make([]int16, 2*vectorAudioRate)
 	for i := range input {
 		seconds := float64(i) / vectorAudioRate
-		envelope := 0.4 + 0.6*math.Sin(math.Pi*seconds)
+		envelope := 0.4 + 0.6*math.Sin(math.Pi*seconds/2)
 		v := 0.0
 		for h := 1; h <= 6; h++ {
-			v += math.Sin(2*math.Pi*220*float64(h)*seconds) / float64(h)
+			v += math.Sin(2*math.Pi*150*float64(h)*seconds) / float64(h)
 		}
 		input[i] = int16(9000 * envelope * v)
 	}
-	// The fallback carrier is 180 Hz; the output must instead follow the
-	// 220 Hz source, like Vector's Dehumaniser does. Measure spectrally:
-	// the comb resonance would confuse an autocorrelation readout.
+	// The carrier EQ removes everything below ~530 Hz, so the strongest
+	// vocoded component lands on a harmonic in the 1.3-2 kHz passband. The
+	// peak must sit on a multiple of the tracked 150 Hz pitch, not on a
+	// multiple of the 180 Hz fallback.
 	got := vectorVocodePCM(input, 180, 1.0)
 	peakFreq, peakPower := 0.0, 0.0
-	for freq := 60.0; freq <= 400; freq += 2 {
+	for freq := 550.0; freq <= 2400; freq += 2 {
 		var re, im float64
 		for i, sample := range got {
 			angle := 2 * math.Pi * freq * float64(i) / vectorAudioRate
@@ -167,7 +169,29 @@ func TestVectorVocoderFollowsSourcePitch(t *testing.T) {
 			peakPower, peakFreq = power, freq
 		}
 	}
-	if math.Abs(peakFreq-220) > 12 {
-		t.Fatalf("vocoded spectral peak %.1f Hz, want ~220 (not the 180 Hz fallback)", peakFreq)
+	offset := math.Abs(math.Mod(peakFreq+75, 150) - 75)
+	if offset > 12 {
+		t.Fatalf("vocoded spectral peak %.1f Hz is not a 150 Hz harmonic (offset %.1f)", peakFreq, offset)
+	}
+}
+
+func TestVectorVocoderCarrierEQTable(t *testing.T) {
+	// The firmware's carrier graphic EQ zeroes everything below ~530 Hz,
+	// halves 530-1330 Hz and passes 1330-3250 Hz at full gain.
+	eq := carrierEQGains()
+	binOf := func(hz float64) int {
+		return int(math.Round(hz * vocoderFrame / vectorAudioRate))
+	}
+	if eq[binOf(150)] != 0 || eq[binOf(300)] != 0 {
+		t.Fatalf("low band not cut: eq[150Hz]=%.2f eq[300Hz]=%.2f", eq[binOf(150)], eq[binOf(300)])
+	}
+	if eq[binOf(800)] != 0.5 {
+		t.Fatalf("mid band: eq[800Hz]=%.2f, want 0.5", eq[binOf(800)])
+	}
+	if eq[binOf(1500)] != 1.0 || eq[binOf(3000)] != 1.0 {
+		t.Fatalf("passband: eq[1500Hz]=%.2f eq[3000Hz]=%.2f, want 1.0", eq[binOf(1500)], eq[binOf(3000)])
+	}
+	if eq[binOf(1500)] != eq[vocoderFrame-1-binOf(1500)] {
+		t.Fatalf("EQ not mirrored for conjugate bins")
 	}
 }
