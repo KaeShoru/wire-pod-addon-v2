@@ -167,13 +167,52 @@ func DoSayText_VectorTTS(robot *vector.Vector, text string) error {
 	return streamVectorPCM(robot, pcm16Bytes(samples), uint32(volume))
 }
 
-// amplifyPCM16 boosts samples above the robot's maximum SDK volume using a
-// soft-knee limiter instead of hard clipping.
+// amplifyPCM16 boosts samples above the robot's maximum SDK volume. The gain
+// is strictly linear; peaks that would exceed the -1.5 dBFS ceiling are caught
+// by a lookahead peak limiter (instant attack, ~100 ms release), the same
+// design Vector's firmware uses after its vocoder. Loudness is maximized
+// without waveshaping: a tanh knee here used to fill pauses with noise and
+// smear the vocoder's harmonics, and scaling the whole utterance down to the
+// highest spike made speech far too quiet.
 func amplifyPCM16(samples []int16, gain float64) []int16 {
-	out := make([]int16, len(samples))
+	const ceiling = 0.8414 // -1.5 dBFS
+	const lookahead = 80   // 5 ms at 16 kHz
+	const release = 0.9994 // ~100 ms time constant
+	n := len(samples)
+	boosted := make([]float64, n)
 	for i, sample := range samples {
-		value := math.Tanh(float64(sample) / 32768 * gain)
-		out[i] = int16(math.Round(value * 32767))
+		boosted[i] = float64(sample) / 32768 * gain
+	}
+	// Per-sample gain: instant attack driven by the lookahead peak envelope,
+	// exponential release so the limiter does not pump.
+	out := make([]int16, n)
+	acc := 1.0
+	window := 0.0
+	for i := 0; i < n; i++ {
+		if i%lookahead == 0 {
+			window = 0.0
+			for j := i; j < i+lookahead && j < n; j++ {
+				if v := math.Abs(boosted[j]); v > window {
+					window = v
+				}
+			}
+		}
+		target := 1.0
+		if window > ceiling {
+			target = ceiling / window
+		}
+		if target < acc {
+			acc = target
+		} else {
+			acc = release*acc + (1-release)*target
+		}
+		v := boosted[i] * acc
+		if v > 1 {
+			v = 1
+		} else if v < -1 {
+			v = -1
+		}
+		out[i] = int16(math.Round(v * 32767))
 	}
 	return out
 }

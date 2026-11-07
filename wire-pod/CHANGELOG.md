@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.9.1
+
+- Fix TTS loudness stage: replaced the tanh soft-clipper (which crushed the whole
+  utterance, filled pauses with boosted noise and smeared vocoder harmonics) with
+  a linear gain + lookahead peak limiter (-1.5 dBFS ceiling, instant attack,
+  ~100 ms release), matching the firmware's post-vocoder limiter design.
+
+
 ## 2.9.0
 
 - Vocoder replaced with a faithful replica of Vector's actual voice chain,

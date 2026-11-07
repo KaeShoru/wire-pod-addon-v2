@@ -1,32 +1,58 @@
 package wirepod_ttr
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
-func TestAmplifyPCM16BoostsWithoutClipping(t *testing.T) {
-	input := []int16{-32768, -24000, -8000, 0, 8000, 24000, 32767}
-	got := amplifyPCM16(input, 1.5)
-	if len(got) != len(input) {
-		t.Fatalf("got %d samples, want %d", len(got), len(input))
+func TestAmplifyPCM16QuietSourceGetsFullLinearGain(t *testing.T) {
+	input := make([]int16, 400)
+	for i := range input {
+		input[i] = int16(1000 * math.Sin(float64(i)/10))
 	}
-	if got[3] != 0 {
-		t.Fatalf("silence amplified to %d", got[3])
+	got := amplifyPCM16(input, 2.0)
+	for i := range input {
+		want := int16(math.Round(float64(input[i]) * 2))
+		if got[i] != want && got[i] != want+1 && got[i] != want-1 {
+			t.Fatalf("sample %d: got %d, want ~%d", i, got[i], want)
+		}
+	}
+}
+
+func TestAmplifyPCM16LimitsSustainedLoudToCeiling(t *testing.T) {
+	input := make([]int16, 4000)
+	for i := range input {
+		input[i] = int16(30000 * math.Sin(float64(i)/7))
+	}
+	got := amplifyPCM16(input, 2.0)
+	peak := 0
+	for _, s := range got {
+		if int(s) > peak {
+			peak = int(s)
+		}
+		if int(-s) > peak {
+			peak = int(-s)
+		}
+	}
+	// -1.5 dBFS ceiling is 27568 in int16; the lookahead limiter must keep the
+	// sustained loud tone right at it, never above full scale.
+	if peak > 27700 || peak < 26500 {
+		t.Fatalf("limiter peak out of range: %d", peak)
+	}
+}
+
+func TestAmplifyPCM16PreservesSignAndSilence(t *testing.T) {
+	input := []int16{-24000, -8000, 0, 8000, 24000}
+	got := amplifyPCM16(input, 1.5)
+	if got[2] != 0 {
+		t.Fatalf("silence amplified to %d", got[2])
 	}
 	for i := range input {
 		if input[i] == 0 {
 			continue
 		}
-		// The boost must preserve the sign and never exceed the int16 range.
 		if (input[i] > 0) != (got[i] > 0) {
 			t.Fatalf("sample %d changed sign: %d -> %d", i, input[i], got[i])
 		}
-	}
-	// Quiet samples sit on the near-linear part of the tanh knee and must
-	// actually get louder.
-	if got[2] >= input[2] || got[4] <= input[4] || got[4] <= 0 {
-		t.Fatalf("gain did not boost quiet samples: %d -> %d", input[4], got[4])
-	}
-	// Hot samples must be limited below full scale instead of wrapping.
-	if got[6] < 28000 || got[0] > -28000 {
-		t.Fatalf("limiter ceiling out of range: %d, %d", got[0], got[6])
 	}
 }
