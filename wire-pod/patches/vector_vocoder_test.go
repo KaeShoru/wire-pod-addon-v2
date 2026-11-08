@@ -176,22 +176,23 @@ func TestVectorVocoderFollowsSourcePitch(t *testing.T) {
 }
 
 func TestVectorVocoderCarrierEQTable(t *testing.T) {
-	// The firmware's carrier graphic EQ zeroes everything below ~530 Hz,
-	// halves 530-1330 Hz and passes 1330-3250 Hz at full gain.
+	// The firmware runs the vocoder at 22.05 kHz, so its carrier graphic EQ
+	// zeroes everything below ~730 Hz, halves 730-1830 Hz, passes 1830-4480 Hz
+	// at full gain and halves everything above.
 	eq := carrierEQGains()
 	binOf := func(hz float64) int {
-		return int(math.Round(hz * vocoderFrame / vectorAudioRate))
+		return int(math.Round(hz * vocoderFrame / vocoderRate))
 	}
 	if eq[binOf(150)] != 0 || eq[binOf(300)] != 0 {
 		t.Fatalf("low band not cut: eq[150Hz]=%.2f eq[300Hz]=%.2f", eq[binOf(150)], eq[binOf(300)])
 	}
-	if eq[binOf(800)] != 0.5 {
-		t.Fatalf("mid band: eq[800Hz]=%.2f, want 0.5", eq[binOf(800)])
+	if eq[binOf(800)] != 0.5 || eq[binOf(1500)] != 0.5 {
+		t.Fatalf("mid band: eq[800Hz]=%.2f eq[1500Hz]=%.2f, want 0.5", eq[binOf(800)], eq[binOf(1500)])
 	}
-	if eq[binOf(1500)] != 1.0 || eq[binOf(3000)] != 1.0 {
-		t.Fatalf("passband: eq[1500Hz]=%.2f eq[3000Hz]=%.2f, want 1.0", eq[binOf(1500)], eq[binOf(3000)])
+	if eq[binOf(2000)] != 1.0 || eq[binOf(3000)] != 1.0 {
+		t.Fatalf("passband: eq[2000Hz]=%.2f eq[3000Hz]=%.2f, want 1.0", eq[binOf(2000)], eq[binOf(3000)])
 	}
-	if eq[binOf(1500)] != eq[vocoderFrame-1-binOf(1500)] {
+	if eq[binOf(2000)] != eq[vocoderFrame-1-binOf(2000)] {
 		t.Fatalf("EQ not mirrored for conjugate bins")
 	}
 }
