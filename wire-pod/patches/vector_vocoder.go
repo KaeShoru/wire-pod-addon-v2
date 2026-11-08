@@ -10,6 +10,11 @@ import (
 
 const vectorAudioRate = 16000
 
+// vocoderRate is the firmware audio engine's internal sample rate: Vector's
+// Acapela voices are 22 kHz, and the vocoder's EQ bands only land on their
+// true frequencies at this rate.
+const vocoderRate = 22050
+
 // decodePCM16WAV reads the ordinary PCM WAV returned by local TTS services.
 // Mono and stereo are accepted; stereo is downmixed before processing.
 func decodePCM16WAV(data []byte) ([]int16, int, error) {
@@ -121,7 +126,10 @@ const (
 	vocoderHop      = 512
 	vocoderGlide    = 512
 	vocoderPitchMin = 100.0
-	vocoderPitchMax = 200.0
+	// The firmware clamps its internal tracker at 200 Hz, but Anki drove the
+	// carrier RTPC from the outside and real Vector speech peaks near 220 Hz,
+	// so our own tracker-driven contour gets more headroom.
+	vocoderPitchMax = 260.0
 )
 
 var vocoderEQBandGains = [8]float64{0, 0, 0, 0, 0.5, 1, 0.5, 1}
@@ -237,10 +245,6 @@ func carrierEQGains() *[vocoderFrame]float64 {
 func trackPitch(samples []int16, rate int) []float64 {
 	frame := vocoderFrame
 	hop := vocoderHop
-	if rate != vectorAudioRate {
-		frame = rate / 15 // keep ~64 ms windows on other rates
-		hop = frame / 2
-	}
 	minLag := rate / 400
 	maxLag := rate / 70
 	if len(samples) < frame || maxLag >= frame {
@@ -335,6 +339,37 @@ func (o *sincOscillator) render(freqs []float64, out []float64) {
 	}
 }
 
+type sawOscillator struct {
+	phase float64
+}
+
+// render produces n samples of a polyBLEP band-limited sawtooth; freqs holds
+// one frequency per sample. The real Vector voice has strong harmonics up to
+// 6 kHz, which the clipped-sinc wavetable (band-limited by construction to
+// ~7 harmonics) could never produce — the firmware's wavetable oscillator is
+// driven as a saw, and polyBLEP is the clean equivalent.
+func (o *sawOscillator) render(freqs []float64, out []float64) {
+	for i := range out {
+		f := freqs[i]
+		dt := f / vocoderRate
+		o.phase += dt
+		if o.phase >= 1 {
+			o.phase -= 1
+		}
+		t := o.phase
+		v := 2*t - 1
+		switch {
+		case t < dt:
+			u := t / dt
+			v -= 2*u - u*u - 1
+		case t > 1-dt:
+			u := (t - 1) / dt
+			v -= u*u + 2*u + 1
+		}
+		out[i] = v * 0.5
+	}
+}
+
 type lowpassBiquad struct {
 	b0, b1, b2 float64
 	a1, a2     float64
@@ -364,11 +399,14 @@ func (f *lowpassBiquad) process(x float64) float64 {
 }
 
 // vectorVocodePCM reproduces Vector's voice: an STFT vocoder whose carrier is
-// Vector's own clipped-sinc wavetable following the speech pitch, shaped by
-// the firmware's 8-band carrier EQ.
+// a band-limited sawtooth following the speech pitch, shaped by the firmware's
+// 8-band carrier EQ. Processing runs at 22050 Hz like Vector's audio engine
+// (the Acapela voices are 22 kHz); this also places the firmware's EQ bands at
+// their true frequencies — at 16 kHz the passband lands an octave too low and
+// the result sounds like a 2002 feature phone.
 //
 // carrierHz is kept as a pitch anchor: the tracked contour is scaled by
-// carrierHz/180 before the [100, 200] Hz clamp, so lower values deepen the
+// carrierHz/180 before the [100, 260] Hz clamp, so lower values deepen the
 // robot and higher values brighten it. wetMix (0..1) maps onto the wet/dry
 // balance, from a dry-forward +(-6 dB) blend to an almost fully vocoded
 // (+24 dB) output; 0 returns the input untouched.
@@ -389,15 +427,20 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	gateThreshold := envFloat("VECTOR_TTS_VOCODER_GATE", 0.008)
 	gateThreshold = math.Max(0, math.Min(0.05, gateThreshold))
 	const gateFloor = 0.05
-	lpfHz := envFloat("VECTOR_TTS_VOCODER_LPF", 2200)
+	// No low-pass by default: the real Vector voice keeps strong 2-6 kHz
+	// content, and the earlier 2.2 kHz filter made it sound like a 2002
+	// feature phone.
+	lpfHz := envFloat("VECTOR_TTS_VOCODER_LPF", 0)
 	lpfHz = math.Max(0, math.Min(7000, lpfHz))
 
-	n := len(input)
+	// Upsample to the firmware's native 22.05 kHz for processing.
+	rs := resamplePCM16(input, vectorAudioRate, vocoderRate)
+	n := len(rs)
 	dry := make([]float64, n)
-	for i, s := range input {
+	for i, s := range rs {
 		dry[i] = float64(s) / 32768
 	}
-	contour := trackPitch(input, vectorAudioRate)
+	contour := trackPitch(rs, vocoderRate)
 	window := vocoderWindow()
 	eq := carrierEQGains()
 
@@ -409,7 +452,7 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	carBuf := make([]complex128, vocoderFrame)
 	frameFreqs := make([]float64, vocoderHop)
 	frameCarrier := make([]float64, vocoderHop)
-	var osc sincOscillator
+	var osc sawOscillator
 	current := 180.0
 	target := 180.0
 	step := 0.0
@@ -522,10 +565,9 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 
 	var lp1, lp2 lowpassBiquad
 	if lpfHz > 0 {
-		lp1 = butterLP(vectorAudioRate, lpfHz)
-		lp2 = butterLP(vectorAudioRate, lpfHz)
+		lp1 = butterLP(vocoderRate, lpfHz)
+		lp2 = butterLP(vocoderRate, lpfHz)
 	}
-	out := make([]int16, n)
 	peak := 0.0
 	mixed := make([]float64, n)
 	for i := 0; i < n; i++ {
@@ -547,7 +589,18 @@ func vectorVocodePCM(input []int16, carrierHz, wetMix float64) []int16 {
 	if peak > ceiling {
 		gain = ceiling / peak
 	}
-	for i, v := range mixed {
+	// Back to the robot's 16 kHz streaming rate.
+	out := make([]int16, len(input))
+	ratio := float64(n-1) / float64(len(input))
+	for i := range out {
+		position := float64(i) * ratio
+		lo := int(position)
+		if lo >= n-1 {
+			out[i] = int16(math.Round(mixed[n-1] * gain * 32767))
+			continue
+		}
+		fraction := position - float64(lo)
+		v := mixed[lo]*(1-fraction) + mixed[lo+1]*fraction
 		out[i] = int16(math.Round(v * gain * 32767))
 	}
 	return out

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.10.0
+
+- Carrier is now a polyBLEP band-limited sawtooth: the clipped-sinc wavetable is
+  band-limited to ~7 harmonics by construction and could never produce Vector's
+  bright 2-6 kHz content ("too little saw"). The firmware's wavetable oscillator
+  is driven as a saw; polyBLEP is the clean equivalent.
+- Vocoder now runs at the firmware's native 22050 Hz (Vector's Acapela voices
+  are 22 kHz): the carrier EQ bands land on their true frequencies (zero below
+  ~730 Hz, half 730-1830, full 1830-4480). At 16 kHz the passband sat an octave
+  too low, which read as a "2002 feature phone" sound.
+- Pitch clamp widened to [100, 260] Hz (real Vector speech peaks near 220 Hz;
+  the firmware's internal 200 Hz clamp applied to its own tracker only).
+
+
 ## 2.9.1
 
 - Fix TTS loudness stage: replaced the tanh soft-clipper (which crushed the whole
