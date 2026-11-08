@@ -4,7 +4,6 @@ slug: wire_pod
 description: Local voice server for Anki Vector, packaged for low-memory Home Assistant systems
 url: https://github.com/KaeShoru/wire-pod-addon-v2
 arch:
-  - aarch64
   - amd64
 startup: services
 host_network: true
